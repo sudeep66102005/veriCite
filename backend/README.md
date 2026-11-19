@@ -97,3 +97,8 @@ Pass a claim, free text, or a CORE query in the URL-encoded `q` parameter.
 CORE results include authors, publication year, DOI, abstract and, when
 available, a full-text download link. `has_full_text` reflects the information
 CORE returned. Discovery results are candidates for review.
+
+To retrieve the full work record, call
+`GET /api/evidence/core/works/{work_id}` with the `core_id` returned by search.
+For example, `GET /api/evidence/core/works/267312` returns the CORE record,
+including any full text, references, and repository metadata supplied by CORE.

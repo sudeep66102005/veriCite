@@ -2,11 +2,11 @@
 
 **React + TypeScript + Tailwind CSS frontend** for INNOVEDGE Problem 03: CiteVerify — Scientific Claim and Citation Verification System.
 
-The frontend is a working, browser-local demonstration. The newer visual analytics, contextual paper-chat demo, report navigation and expandable source previews are retained and converted to typed Tailwind components. It provides PDF selection, simulated processing progress, claim cards, citation mapping, evidence inspection, manual source-PDF attachments, human review and report export. **No backend is built or changed by this frontend migration.** The existing `backend/` implementation is preserved and is not called by this UI.
+The browser workspace extracts candidate claims and maps simple citations from research PDFs and plain text. It includes visual analytics, paper chat, source previews, manual source-PDF attachments, human review and report export. The standalone backend is separate from this browser workflow.
 
 ## Run
 
-Use Node.js 22.12+ (Node 24 recommended).
+Use Node.js 22.13+ (Node 24 recommended).
 
 ```bash
 cd frontend
@@ -23,7 +23,7 @@ npm run build
 npm run preview
 ```
 
-`build` runs strict TypeScript checks before Vite. Deploy `frontend/dist` on a static host. For Vercel, set the root directory to `frontend`, build command to `npm run build`, and output directory to `dist`. No keys or environment variables are required for this demo.
+`build` runs strict TypeScript checks before Vite. Deploy `frontend/dist` on a static host. For Vercel, set the root directory to `frontend`, build command to `npm run build`, and output directory to `dist`. No keys or environment variables are required for browser-local analysis.
 
 ## Technology plan and current scope
 
@@ -31,7 +31,7 @@ npm run preview
 |---|---|---|---|
 | Frontend | React + TypeScript + Tailwind CSS | PDF upload UI, progress screen, claim cards, report | Implemented; typed components and Tailwind v4 Vite integration |
 | Backend | Python + FastAPI | Uploads and extraction/retrieval/verification orchestration | Future integration; existing discovery backend untouched |
-| PDF processing | PyMuPDF | Extract text with page numbers and text locations | Future backend; no PDF text extraction in this demo |
+| PDF processing | PDF.js | Extract selectable PDF text in the browser | Implemented; scanned PDFs require OCR |
 | Reference matching | Crossref API | Publication metadata and DOI matching | Future integration; local citation mapping and sample sources now |
 | Source access | Unpaywall API + manual PDF upload | Locate accessible source papers | Manual local PDF attachment UI implemented; Unpaywall not called |
 | AI verification | One hosted LLM API | Extract claims and compare with retrieved evidence | Sample fixtures only; no provider selected or key required |
@@ -43,21 +43,19 @@ npm run preview
 ## Eight frontend feature groups
 
 1. **Document input:** select or drop a PDF up to 10 MB, inspect the selected file through a local browser URL, remove it, or import TXT/Markdown up to 1 MB. Paste/edit text and document titles.
-2. **Processing progress:** four staged steps with accessible progress, explicit simulation labels, cancellation and error feedback. Cancellation preserves the previous report.
-3. **Claim cards and verdict dashboard:** six sample verdicts, summary counts, selected-claim state, responsive layout and empty states. Custom text always produces unverified candidate claims.
+2. **Processing progress:** local PDF extraction with accessible progress, cancellation and error feedback. Cancellation preserves the previous report.
+3. **Claim cards and verdict dashboard:** six sample verdicts, summary counts, selected-claim state, responsive layout and empty states. PDFs and custom text produce unverified candidate claims.
 4. **Citation mapping and issues:** simple `[1]` and `(Author, Year)` mappings under References/Bibliography; missing/unmatched reference flags and illustrative scope/number/freshness issues.
 5. **Evidence and manual sources:** evidence paraphrase, reason, illustrative uncertainty, matched reference and safe DOI link; attach/remove source PDFs per claim and open them while this session retains their bytes.
 6. **Search and filters:** search claims/references, filter by verdict, clear empty results, and navigate from a reference issue to its claim.
 7. **Human review:** reviewer notes, reviewed/follow-up decisions and timestamped history. Compatible previous demo history is migrated locally. Decisions never automatically change scientific verdicts.
-8. **Reports:** JSON export with reviews, provenance, simulation mode and attachment metadata; CSV export of all claims; restore a validated JSON report. Draft title edits do not rename a completed report.
+8. **Reports:** JSON export with reviews, provenance, analysis mode and attachment metadata; CSV export of all claims; restore a validated JSON report. Draft title edits do not rename a completed report.
 
-## What PDF “upload” means here
+## Analyze a PDF
 
-Files are **selected locally, not uploaded to a server**. The app checks the extension, 10 MB limit, nonempty size and `%PDF-` header. Header validation is not a complete PDF integrity, encryption or malware check.
+Open **Document**, select a text-based PDF up to 10 MB and choose **Analyze PDF**. PDF.js reads the selected file in your browser and the report uses its filename, candidate claims and matched bibliography entries. The app reports unreadable or textless files as errors. Use OCR to make scanned documents searchable first.
 
-The PDF workflow deliberately **simulates** extraction and retrieval. Its report is titled “Illustrative sample report — not extracted from your PDF.” The filename is stored separately as requested-file metadata. Every PDF simulation notice and JSON report explains that sample claims do not describe the uploaded paper. No page numbers, bounding boxes or quotations are fabricated.
-
-To demonstrate actual local extraction, switch to **Paste or import text**. Sentence heuristics extract candidate claims and simple reference mappings; all results remain **Unverified**. This is not a semantic claim extraction model. Citation ranges, multiline bibliography entries and complex author formats are not supported yet.
+**Paste or import text** uses the same sentence and citation heuristics. PDF layout and complex citation formats can affect how text, claims and references are recognized. Candidate claims remain **Unverified** pending evidence assessment. Use **Load sample** to see the illustrative report.
 
 Sample evidence is authored paraphrase, not retrieved quotations; sample confidence is illustrative, not a calibrated probability. A DOI link alone does not prove a claim. Old publication dates alone do not invalidate findings.
 
@@ -74,7 +72,7 @@ Sample evidence is authored paraphrase, not retrieved quotations; sample confide
 1. Inspect the bundled sample; select the 30% overstatement and contradictory claim.
 2. Filter by status, search for a phrase, and follow a citation issue to its claim.
 3. Add a review note, flag the claim and inspect Review history. Reload to confirm persistence.
-4. Open Document, select a PDF, run the **PDF workflow demo**, and show the explicitly simulated progress/report. Demonstrate cancellation on another run.
+4. Open Document, select a PDF, run **Analyze PDF**, and inspect the extracted claims and references.
 5. Attach a source PDF to a claim; explain that this is a local review attachment, not verified evidence.
 6. Switch to text input and extract a custom paragraph with a reference list. Show its Unverified status.
 7. Export JSON/CSV and restore the JSON report.
@@ -92,7 +90,7 @@ Use the contracts in [`frontend/src/contracts.ts`](frontend/src/contracts.ts) wh
 | `POST /api/claims/:id/reviews` | Persist reviewer decision and note |
 | `GET /api/documents/:id/report` | Export report with provenance and review history |
 
-Replace `runDemo` with an API adapter once those contracts exist. Keep fixtures in an explicit demo mode and retain unverified/unavailable-source states. Do not point this UI at the existing search API and treat candidate publications as verified evidence.
+The browser analysis uses `runAnalysis`. Keep fixtures in an explicit demo mode and retain unverified/unavailable-source states. Do not point this UI at the existing search API and treat candidate publications as verified evidence.
 
 ### Planned backend flow
 
@@ -126,7 +124,8 @@ frontend/
     types.ts           Typed demo data models
     contracts.ts       Future backend contract types only
     engine.ts          Extraction, fixtures and report helpers
-    services.ts        Local file validation, mock pipeline, restoration
+    services.ts        Local file validation, analysis and restoration
+    pdf.ts             Local PDF text extraction
     engine.test.ts     Frontend regression tests
     styles.css         Tailwind import, theme and reusable utility compositions
 backend/               Existing implementation, unchanged by this migration
@@ -134,4 +133,4 @@ backend/               Existing implementation, unchanged by this migration
 
 ## Validation and limits
 
-The TypeScript/test/build commands above check citation mapping, honest unverified output, CSV escaping, persisted state validation, PDF header/size validation, cancellation and simulated PDF provenance. Manual browser checks cover the visible upload/progress workflow, report views and review interactions. Frontend tests do not establish scientific accuracy or live API availability. PyMuPDF, Pydantic, Supabase integration and pytest verification examples belong to the future backend work.
+The TypeScript/test/build commands above check citation mapping, honest unverified output, CSV escaping, persisted state validation, PDF header/size validation, cancellation, distinct PDF contents and unreadable PDFs. Manual browser checks cover the visible upload/progress workflow, report views and review interactions. Frontend tests do not establish scientific accuracy or live API availability. PyMuPDF, Pydantic, Supabase integration and pytest verification examples belong to the future backend work.

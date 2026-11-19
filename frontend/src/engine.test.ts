@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { extract, sampleClaims, csv, report, initialWorkspace } from './engine';
-import { decodeWorkspace, runDemo, validatePdf } from './services';
+import { decodeWorkspace, runAnalysis, validatePdf } from './services';
 
 test('maps numeric citations without treating bibliography as claims', () => {
  const rows = extract('An intervention improves results [1].\nReferences\n[1] Smith 2020. Study.');
@@ -25,7 +25,7 @@ test('CSV escapes text and guards spreadsheet formula cells', () => {
 });
 test('reports preserve mode, source metadata and review history', () => {
  const state = initialWorkspace(); state.history.push({claimId:'claim-1',decision:'Reviewed',note:'Check',at:new Date().toISOString()});
- const result = report(state); assert.match(result.disclaimer, /PDF contents are not parsed/);
+ const result = report(state); assert.match(result.disclaimer, /illustrative paraphrases/);
  const restored=decodeWorkspace(JSON.stringify(result)); assert.equal(restored?.document,state.document); assert.deepEqual(restored?.history,state.history);
 });
 test('invalid persisted state is rejected without crashing', () => {
@@ -41,10 +41,51 @@ test('PDF validation rejects unsupported, empty and oversized files', async () =
 });
 test('cancelled workflow does not produce a replacement report', async () => {
  const c = new AbortController(); c.abort();
- await assert.rejects(runDemo({ kind:'text',title:'Test',text:'This claim needs a source.',file:null }, () => {}, c.signal), {name:'AbortError'});
+ await assert.rejects(runAnalysis({ kind:'text',title:'Test',text:'This claim needs a source.',file:null }, () => {}, c.signal), {name:'AbortError'});
 });
-test('PDF demo explicitly separates uploaded metadata from sample claims', async () => {
- const result = await runDemo({kind:'pdf',title:'Actual research',text:'',file:new File(['%PDF-1.4\n'],'actual.pdf')}, () => {}, new AbortController().signal);
- assert.equal(result.mode, 'PDF workflow simulation'); assert.equal(result.requestedPdf?.name,'actual.pdf');
- assert.match(result.document, /not extracted from your PDF/); assert.deepEqual(result.claims, sampleClaims());
+
+function makePdf(lines: string[], filename = 'paper.pdf'): File {
+ const stream = ['BT /F1 12 Tf 72 720 Td 18 TL', ...lines.map((line, i) => `${i ? 'T* ' : ''}(${line}) Tj`), 'ET'].join('\n');
+ const objects = [
+  '<< /Type /Catalog /Pages 2 0 R >>',
+  '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+  '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+ ];
+ let pdf = '%PDF-1.4\n';
+ const offsets = objects.map((object, i) => {
+  const offset = pdf.length;
+  pdf += `${i + 1} 0 obj\n${object}\nendobj\n`;
+  return offset;
+ });
+ const xref = pdf.length;
+ pdf += 'xref\n0 6\n0000000000 65535 f \n';
+ for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+ pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+ return new File([pdf], filename, { type: 'application/pdf' });
+}
+
+const analyzePdf = (file: File) =>
+ runAnalysis({ kind: 'pdf', title: '', text: '', file }, () => {}, new AbortController().signal);
+
+test('different PDF contents produce different claims and references even with the same filename', async () => {
+ const first = await analyzePdf(makePdf(['Solar panels power the observatory [1].', 'References', '[1] Solar power study.']));
+ const second = await analyzePdf(makePdf(['Coastal forests reduce flood damage [1].', 'References', '[1] Coastal forest study.']));
+ assert.deepEqual(first.claims.map(row => row.claim), ['Solar panels power the observatory [1].']);
+ assert.deepEqual(second.claims.map(row => row.claim), ['Coastal forests reduce flood damage [1].']);
+ assert.deepEqual(first.claims[0].references, ['[1] Solar power study.']);
+ assert.deepEqual(second.claims[0].references, ['[1] Coastal forest study.']);
+ for (const result of [first, second]) {
+  assert.equal(result.document, 'paper.pdf');
+  assert.equal(result.requestedPdf?.name, 'paper.pdf');
+  assert.equal(result.mode, 'PDF · unverified');
+  assert.equal(result.claims[0].status, 'Unverified');
+  assert.deepEqual(decodeWorkspace(JSON.stringify(result)), result);
+ }
+});
+
+test('unreadable and textless PDFs fail without returning a sample report', async () => {
+ await assert.rejects(analyzePdf(new File(['%PDF-1.4\n'], 'broken.pdf')), /Could not read this PDF/);
+ await assert.rejects(analyzePdf(makePdf([])), /no selectable text/);
 });

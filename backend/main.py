@@ -33,3 +33,6 @@ async def open_access(doi: str = Query(min_length=3, max_length=250)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail=f"Unpaywall returned HTTP {exc.response.status_code}") from exc
+
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="Unpaywall is temporarily unreachable; please retry.") from exc

@@ -8,3 +8,4 @@ test('does not invent DOI URLs or proof',()=>{const r=extract('This intervention
 test('sample covers all verdicts',()=>assert.equal(new Set(sampleClaims().map(r=>r.status)).size,6));
 test('CSV escapes commas quotes and newlines',()=>assert.match(csv([{claim:'a,"b"\nc',status:'Unverified',references:[]}]),/"a,""b""\nc"/));
 test('report preserves decisions and demo disclaimer',()=>{const x=report({title:'Test',claims:[],reviews:{},history:[],mode:'Sample demo'});assert.match(x.disclaimer,/Demo only/);assert.equal(x.document,'Test')});
+test('report keeps analyzed document identity while another document is being edited',()=>{const r=report({title:'New draft',analyzedTitle:'Analyzed paper',claims:[],reviews:{},history:[]});assert.equal(r.document,'Analyzed paper')});

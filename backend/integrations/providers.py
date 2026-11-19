@@ -123,7 +123,9 @@ async def search_all(query, limit=5, providers=None):
     papers, errors, seen = [], {}, set()
     for name, result in zip(selected, results):
         if isinstance(result, BaseException):
-            errors[name] = str(result)
+            errors[name] = (f"Provider returned HTTP {result.response.status_code}"
+                            if isinstance(result, httpx.HTTPStatusError)
+                            else "Provider request failed; check configuration or retry.")
             continue
         for item in result:
             key = (item.get("doi") or item.get("title") or "").strip().lower()

@@ -35,3 +35,10 @@ retry/backoff, request authentication, monitoring and normalized identifiers.
 
 Never commit `.env` or API keys. This initial implementation does not upload PDFs,
 extract claims, download full texts or use AI to verify them.
+
+### Deterministic checks
+
+From the repository root, run `python -m unittest discover -s backend -p 'test_*.py' -v`.
+These tests mock provider responses; passing tests do not establish live provider availability.
+If your environment requires a SOCKS proxy, install the optional HTTPX dependency with
+`pip install 'httpx[socks]'` before making network requests.

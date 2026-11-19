@@ -20,6 +20,36 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/evidence/search?q=a').status_code, 422)
         self.assertEqual(self.client.get('/api/evidence/search?q=learning&providers=wrong').status_code, 400)
 
+    def test_core_work_details(self):
+        work = {"id": 267312, "title": "Study", "fullText": "Evidence from CORE"}
+        request = httpx.Request("GET", "https://api.core.ac.uk/v3/works/267312")
+        with patch.dict(os.environ, {"CORE_API_KEY": "test-key"}):
+            with patch("httpx.AsyncClient.get", new=AsyncMock(
+                return_value=httpx.Response(200, request=request, json=work)
+            )) as get:
+                response = self.client.get("/api/evidence/core/works/267312")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), work)
+        get.assert_awaited_once_with(
+            str(request.url), params=None,
+            headers={"Authorization": "Bearer test-key", "Accept": "application/json"},
+            follow_redirects=False,
+        )
+
+    def test_core_work_error_statuses(self):
+        path = "/api/evidence/core/works/267312"
+        self.assertEqual(self.client.get("/api/evidence/core/works/0").status_code, 422)
+        with patch.dict(os.environ, {"CORE_API_KEY": ""}):
+            self.assertEqual(self.client.get(path).status_code, 503)
+        request = httpx.Request("GET", "https://api.core.ac.uk/v3/works/267312")
+        with patch.dict(os.environ, {"CORE_API_KEY": "test-key"}):
+            for upstream, expected in ((404, 404), (429, 429), (401, 502)):
+                with self.subTest(upstream=upstream):
+                    with patch("httpx.AsyncClient.get", new=AsyncMock(
+                        return_value=httpx.Response(upstream, request=request)
+                    )):
+                        self.assertEqual(self.client.get(path).status_code, expected)
+
     def test_open_access_timeout(self):
         with patch('main.unpaywall', new=AsyncMock(side_effect=httpx.ReadTimeout('timeout'))):
             response = self.client.get('/api/evidence/open-access?doi=10.1/test')

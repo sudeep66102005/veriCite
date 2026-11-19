@@ -5,12 +5,14 @@ No new packages are installed — google-genai is already in requirements.txt.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
 import google.genai as genai
+from google.genai.errors import APIError
 
-from app.config import GEMINI_API_KEY, GEMINI_MODEL
+from app.config import GEMINI_API_KEY, GEMINI_MODEL, PROVIDER_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,12 @@ def _make_client() -> genai.Client:
 # ---------------------------------------------------------------------------
 # Stage 2 – Claim extraction
 # ---------------------------------------------------------------------------
+
+
+class ExtractionProviderError(RuntimeError):
+    def __init__(self, message: str, *, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 async def extract_claims_gemini(
@@ -65,16 +73,26 @@ async def extract_claims_gemini(
         f"Representative clause: {original_span}"
     )
 
+    if not GEMINI_API_KEY:
+        raise ExtractionProviderError("Gemini API key is missing.")
     try:
-        client = _make_client()
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config={"response_mime_type": "application/json"},
-        )
-        raw = response.text or "[]"
+        async with asyncio.timeout(PROVIDER_TIMEOUT), _make_client().aio as client:
+            response = await client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config={"response_mime_type": "application/json"},
+            )
+            raw = response.text or "[]"
+    except APIError as exc:
+        code = exc.code
+        raise ExtractionProviderError(
+            f"Gemini rejected the extraction request (HTTP {code}).",
+            retryable=code in (408, 500, 502, 503, 504),
+        ) from exc
+    except TimeoutError as exc:
+        raise ExtractionProviderError("Gemini extraction timed out.", retryable=True) from exc
     except Exception as exc:
-        raise RuntimeError(str(exc)) from exc
+        raise ExtractionProviderError("Gemini extraction request failed.") from exc
 
     try:
         items: list[dict] = json.loads(raw)

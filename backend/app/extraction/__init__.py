@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
-import logging
 
 from app.models import (
     BlockType,
@@ -21,10 +20,8 @@ from app.models import (
     MappingStatus,
     Reference,
 )
-from app.providers import extract_claims_gemini
+from app.providers import ExtractionProviderError, extract_claims_gemini
 from app.config import MAX_RETRIES
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Regex helpers
@@ -350,6 +347,20 @@ async def extract_claims_and_links(
     links: list[ClaimReferenceLink] = []
     issues: list[str] = []
 
+    slots = asyncio.Semaphore(4)
+    max_attempts = max(1, min(MAX_RETRIES, 2))
+
+    async def extract_marker(block_text: str, marker: str, ref_ids: list[str], span: str):
+        for attempt in range(max_attempts):
+            try:
+                async with slots:
+                    return await extract_claims_gemini(block_text, marker, ref_ids, span), None
+            except ExtractionProviderError as exc:
+                if not exc.retryable or attempt + 1 == max_attempts:
+                    return [], str(exc)
+            await asyncio.sleep(2 ** attempt)
+
+    work = []
     non_bib_blocks = [b for b in blocks if b.block_type != BlockType.bibliography]
 
     for block in non_bib_blocks:
@@ -385,92 +396,76 @@ async def extract_claims_and_links(
                 )
                 continue
 
-            # Call Gemini with retries
-            claim_dicts: list[dict] = []
-            last_error: str | None = None
-            for attempt in range(MAX_RETRIES):
-                try:
-                    claim_dicts = await extract_claims_gemini(
-                        paragraph_text=block.text,
-                        marked_span=marker_text,
-                        allowed_ref_ids=allowed_ref_ids,
-                        original_span=clause_text,
-                    )
-                    last_error = None
-                    break
-                except RuntimeError as exc:
-                    last_error = str(exc)
-                    logger.warning(
-                        "extract_claims_gemini attempt %d/%d failed: %s",
-                        attempt + 1,
-                        MAX_RETRIES,
-                        last_error,
-                    )
-                    await asyncio.sleep(2 ** attempt)  # exponential back-off
+            work.append((block, marker_index, marker_text, cs, ce, marker_ref_ids, allowed_ref_ids, clause_text))
 
-            if last_error is not None:
-                issues.append(
-                    f"block={block.block_id} marker='{marker_text}': "
-                    f"Gemini extraction failed after {MAX_RETRIES} attempts: {last_error}"
-                )
-                # Create a fallback link marked ambiguous
-                for rid in allowed_ref_ids:
-                    link_id = f"lnk_{uuid.uuid4().hex[:12]}"
-                    links.append(
-                        ClaimReferenceLink(
-                            link_id=link_id,
-                            claim_id="",  # no claim created
-                            ref_id=rid,
-                            citation_marker=marker_text,
-                            marker_char_start=cs,
-                            marker_char_end=ce,
-                            citation_group_id=f"group_{block.block_id}_{marker_index}",
-                            mapping_status=MappingStatus.ambiguous,
-                        )
-                    )
-                continue
-
-            # Determine if the whole marker group is ambiguous
-            is_ambiguous_group = (
-                len(marker_ref_ids) > 1 or not marker_ref_ids
+    results = await asyncio.gather(*(
+        extract_marker(block.text, marker, allowed_refs, clause)
+        for block, _, marker, _, _, _, allowed_refs, clause in work
+    ))
+    for (block, marker_index, marker_text, cs, ce, marker_ref_ids, allowed_ref_ids, clause_text), (claim_dicts, last_error) in zip(work, results):
+        if last_error is not None:
+            issues.append(
+                f"block={block.block_id} marker='{marker_text}': "
+                f"Gemini extraction failed: {last_error}"
             )
-
-            for claim_dict in claim_dicts:
-                # Build Claim
-                short_uuid = uuid.uuid4().hex[:8]
-                claim_id = f"{block.document_id}_c{short_uuid}"
-                claim = Claim(
-                    claim_id=claim_id,
-                    document_id=block.document_id,
-                    block_id=block.block_id,
-                    original_span=claim_dict.get("original_span", clause_text),
-                    normalized_text=claim_dict.get("claim_text", ""),
-                    char_start=None,
-                    char_end=None,
-                )
-                claims.append(claim)
-
-                # Build ClaimReferenceLinks
-                ref_ids_for_claim: list[str] = claim_dict.get("ref_ids", []) or allowed_ref_ids
-                group_id = (
-                    f"group_{block.block_id}_{marker_index}"
-                    if is_ambiguous_group or len(ref_ids_for_claim) == len(allowed_ref_ids)
-                    else None
-                )
-                for rid in ref_ids_for_claim:
-                    link_id = f"lnk_{uuid.uuid4().hex[:12]}"
-                    links.append(
-                        ClaimReferenceLink(
-                            link_id=link_id,
-                            claim_id=claim_id,
-                            ref_id=rid,
-                            citation_marker=marker_text,
-                            marker_char_start=cs,
-                            marker_char_end=ce,
-                            citation_group_id=group_id,
-                            mapping_status=MappingStatus.mapped,
-                        )
+            # Create a fallback link marked ambiguous
+            for rid in allowed_ref_ids:
+                link_id = f"lnk_{uuid.uuid4().hex[:12]}"
+                links.append(
+                    ClaimReferenceLink(
+                        link_id=link_id,
+                        claim_id="",  # no claim created
+                        ref_id=rid,
+                        citation_marker=marker_text,
+                        marker_char_start=cs,
+                        marker_char_end=ce,
+                        citation_group_id=f"group_{block.block_id}_{marker_index}",
+                        mapping_status=MappingStatus.ambiguous,
                     )
+                )
+            continue
+
+        # Determine if the whole marker group is ambiguous
+        is_ambiguous_group = (
+            len(marker_ref_ids) > 1 or not marker_ref_ids
+        )
+
+        for claim_dict in claim_dicts:
+            # Build Claim
+            short_uuid = uuid.uuid4().hex[:8]
+            claim_id = f"{block.document_id}_c{short_uuid}"
+            claim = Claim(
+                claim_id=claim_id,
+                document_id=block.document_id,
+                block_id=block.block_id,
+                original_span=claim_dict.get("original_span", clause_text),
+                normalized_text=claim_dict.get("claim_text", ""),
+                char_start=None,
+                char_end=None,
+            )
+            claims.append(claim)
+
+            # Build ClaimReferenceLinks
+            ref_ids_for_claim: list[str] = claim_dict.get("ref_ids", []) or allowed_ref_ids
+            group_id = (
+                f"group_{block.block_id}_{marker_index}"
+                if is_ambiguous_group or len(ref_ids_for_claim) == len(allowed_ref_ids)
+                else None
+            )
+            for rid in ref_ids_for_claim:
+                link_id = f"lnk_{uuid.uuid4().hex[:12]}"
+                links.append(
+                    ClaimReferenceLink(
+                        link_id=link_id,
+                        claim_id=claim_id,
+                        ref_id=rid,
+                        citation_marker=marker_text,
+                        marker_char_start=cs,
+                        marker_char_end=ce,
+                        citation_group_id=group_id,
+                        mapping_status=MappingStatus.mapped,
+                    )
+                )
 
     return claims, links, issues
 

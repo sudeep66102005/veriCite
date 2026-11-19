@@ -31,7 +31,11 @@ export function initialWorkspace(): Workspace {
 }
 export function report(state: Workspace): VerificationReport {
  return {...state, product:'veriCite', generatedAt:new Date().toISOString(),
- disclaimer:'Frontend demo only. Sample evidence is illustrative, not retrieved quotations. Uploaded PDF contents are not parsed or verified; custom text remains unverified. Human review is required.',
+ disclaimer: state.mode === 'PDF workflow simulation'
+   ? 'This legacy simulation used illustrative sample claims and did not parse the selected PDF.'
+   : state.mode === 'Sample demo'
+     ? 'Sample evidence consists of illustrative paraphrases. Human review is required.'
+     : 'Candidate claims were extracted locally. Evidence retrieval and verification require further review.',
  attachmentNotice:'Attachment metadata only; PDF bytes are held in browser memory and are not included in this report or retained after reload.'};
 }
 export function csv(rows: Claim[]): string {

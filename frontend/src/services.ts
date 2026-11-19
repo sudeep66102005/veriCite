@@ -1,4 +1,5 @@
-import { extract, initialWorkspace, sampleClaims } from './engine';
+import { extract, initialWorkspace } from './engine';
+import { readPdfText } from './pdf';
 import { verdicts, type Claim, type FileMetadata, type Mode, type PipelineStep, type Review, type SourceAttachment, type Workspace } from './types';
 
 export const STORAGE_KEY = 'vericite-v2';
@@ -10,41 +11,38 @@ export async function validatePdf(file: File): Promise<void> {
   if (file.size > PDF_LIMIT) throw new Error('Choose a PDF smaller than 10 MB.');
   const header = await file.slice(0, 5).text();
   if (header !== '%PDF-') throw new Error('The selected file does not have a PDF header.');
-  // Header validation is not a full PDF integrity check. PyMuPDF belongs in the future backend.
 }
 export const pdfSteps: PipelineStep[] = [
-  { title: 'Check local file', detail: 'Validate the selected PDF header and size. No upload is sent.' },
-  { title: 'Simulate extraction', detail: 'Demonstrate the extraction stage. PDF text is not parsed.' },
-  { title: 'Simulate evidence retrieval', detail: 'Use the bundled sample. No Crossref, Unpaywall or LLM requests.' },
-  { title: 'Prepare sample report', detail: 'Build an illustrative report, separate from the selected PDF contents.' },
+  { title: 'Check local file', detail: 'Validate the selected PDF header and size.' },
+  { title: 'Read PDF text', detail: 'Extract selectable text from the PDF in your browser.' },
+  { title: 'Extract claims and map citations', detail: 'Identify candidate claims and match simple bibliography entries.' },
 ];
 export const textSteps: PipelineStep[] = [
   { title: 'Read document text', detail: 'Process the text locally in your browser.' },
-  { title: 'Extract candidate claims', detail: 'Use sentence heuristics; this is not semantic AI extraction.' },
-  { title: 'Map citations', detail: 'Match simple numeric and author-year references.' },
-  { title: 'Prepare unverified report', detail: 'No evidence service is connected. All custom claims remain unverified.' },
+  { title: 'Extract claims and map citations', detail: 'Identify candidate claims and match simple bibliography entries.' },
 ];
-function delay(signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) { reject(new DOMException('Cancelled', 'AbortError')); return; }
-    const cancel = () => { clearTimeout(timer); reject(new DOMException('Cancelled', 'AbortError')); };
-    const timer = setTimeout(() => { signal.removeEventListener('abort', cancel); resolve(); }, 450);
-    signal.addEventListener('abort', cancel, { once: true });
-  });
-}
-export async function runDemo(input: { kind: 'pdf' | 'text'; title: string; text: string; file: File | null }, onStep: (step: number) => void, signal: AbortSignal): Promise<Workspace> {
+export async function runAnalysis(input: { kind: 'pdf' | 'text'; title: string; text: string; file: File | null }, onStep: (step: number) => void, signal: AbortSignal): Promise<Workspace> {
+  const file = input.kind === 'pdf' ? input.file : null;
+  let text = input.text;
+  signal.throwIfAborted();
+  onStep(0);
   if (input.kind === 'pdf') {
-    if (!input.file) throw new Error('Select a PDF before starting the demo.');
-    await validatePdf(input.file);
-  } else if (!input.text.trim()) throw new Error('Paste academic text or import a TXT/Markdown file.');
-  for (let i = 0; i < 4; i++) { onStep(i); await delay(signal); }
-  const claims = input.kind === 'pdf' ? sampleClaims() : extract(input.text);
+    if (!file) throw new Error('Select a PDF before analyzing.');
+    await validatePdf(file);
+    signal.throwIfAborted();
+    onStep(1);
+    text = await readPdfText(file, signal);
+  } else if (!text.trim()) throw new Error('Paste academic text or import a TXT/Markdown file.');
+
+  signal.throwIfAborted();
+  onStep(file ? 2 : 1);
+  const claims = extract(text);
   if (!claims.length) throw new Error('No candidate claims found. Add a sentence longer than 12 characters.');
   return {
     ...initialWorkspace(), claims,
-    mode: input.kind === 'pdf' ? 'PDF workflow simulation' : 'Custom text · unverified',
-    document: input.kind === 'pdf' ? 'Illustrative sample report — not extracted from your PDF' : input.title.trim() || 'Untitled document',
-    requestedPdf: input.file && input.kind === 'pdf' ? fileMetadata(input.file) : null,
+    mode: file ? 'PDF · unverified' : 'Custom text · unverified',
+    document: file?.name || input.title.trim() || 'Untitled document',
+    requestedPdf: file ? fileMetadata(file) : null,
   };
 }
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
@@ -57,7 +55,7 @@ export function decodeWorkspace(raw: string | null): Workspace | null {
   try {
     const x: unknown = JSON.parse(raw || 'null');
     if (!object(x) || !Array.isArray(x.claims) || !x.claims.every(claim) || !object(x.reviews) || !Object.values(x.reviews).every(review) || !Array.isArray(x.history) || !x.history.every(review)) return null;
-    if (x.schemaVersion === 2 && typeof x.document === 'string' && ['Sample demo','Custom text · unverified','PDF workflow simulation'].includes(x.mode as string) && Array.isArray(x.attachments) && x.attachments.every(attachment) && (x.requestedPdf === null || metadata(x.requestedPdf))) return x as unknown as Workspace;
+    if (x.schemaVersion === 2 && typeof x.document === 'string' && ['Sample demo','Custom text · unverified','PDF · unverified','PDF workflow simulation'].includes(x.mode as string) && Array.isArray(x.attachments) && x.attachments.every(attachment) && (x.requestedPdf === null || metadata(x.requestedPdf))) return x as unknown as Workspace;
     // Preserve compatible review history from the previous JavaScript demo.
     if (typeof x.title === 'string') return { ...initialWorkspace(), document: typeof x.analyzedTitle === 'string' ? x.analyzedTitle : x.title, claims:x.claims, reviews:x.reviews as Record<string,Review>, history:x.history, mode:(x.mode === 'Sample demo' ? 'Sample demo' : 'Custom text · unverified') as Mode };
     return null;

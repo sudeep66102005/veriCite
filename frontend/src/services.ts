@@ -84,9 +84,9 @@ function toClaim(row: VerificationRow): Claim {
     confidence: null,
     evidence: evidence.map(p => p.verbatim_text).join('\n\n') || 'No source passage is available for this assessment.',
     section: evidence.map(p => [p.section, p.page !== null ? `Page ${p.page}` : null].filter(Boolean).join(' · ')).filter(Boolean).join(', ') || 'Not available',
-    reason: row.mapping === 'ambiguous' ? 'The citation mapping requires human review.' :
+    reason: row.extraction_error ? `Original cited text retained for review. ${row.extraction_error}` : row.mapping === 'ambiguous' ? 'The citation mapping requires human review.' :
       assessment?.explanation || 'The service could not assess this claim against a cited source.',
-    flags: [...(assessment?.issue_flags || []), ...(row.mapping && row.mapping !== 'mapped' ? [`Citation mapping: ${row.mapping}`] : [])],
+    flags: [...(row.extraction_error ? ['Extraction incomplete'] : []), ...(assessment?.issue_flags || []), ...(row.mapping && row.mapping !== 'mapped' ? [`Citation mapping: ${row.mapping}`] : [])],
     source: row.doi ? `https://doi.org/${encodeURI(row.doi)}` : null,
   };
 }
@@ -110,7 +110,7 @@ export async function runVerification(input: DocumentInput, onStep: (step: numbe
   const { rows } = await getJobClaims(job_id, signal);
   if (!Array.isArray(rows)) throw new Error('The verification server needs the latest backend deployment.');
   const issues = job.report?.stage_errors.length ?? 0;
-  if (!rows.length && issues) throw new Error('Verification could not extract any claims. Check the backend model configuration and service logs.');
+  if (!rows.length && job.report?.stage_errors.some(issue => issue.includes('no ref_ids') || issue.includes('unmatched citation marker'))) throw new Error('Citation markers were found, but no claims could be linked. Check that the extracted text includes readable bibliography entries.');
   if (!rows.length) throw new Error('The verifier found no cited claims. Check that the document text contains readable citations and a References section.');
   const workspace: Workspace = {
     ...initialWorkspace(),

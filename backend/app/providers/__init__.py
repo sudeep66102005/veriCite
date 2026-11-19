@@ -9,9 +9,10 @@ import httpx
 from app.config import OPENAI_API_KEY, OPENAI_MODEL, PROVIDER_TIMEOUT
 
 class ExtractionProviderError(RuntimeError):
-    def __init__(self, message: str, *, retryable: bool = False):
+    def __init__(self, message: str, *, retryable: bool = False, stop_job_requests: bool = False):
         super().__init__(message)
         self.retryable = retryable
+        self.stop_job_requests = stop_job_requests
 
 
 async def _request_json(prompt: str) -> dict:
@@ -42,6 +43,7 @@ async def _request_json(prompt: str) -> dict:
         raise ExtractionProviderError(
             f"OpenAI API request failed (HTTP {code}).",
             retryable=code in (408, 500, 502, 503, 504),
+            stop_job_requests=code in (401, 403, 404, 429),
         ) from exc
     except (TimeoutError, httpx.TransportError) as exc:
         raise ExtractionProviderError("OpenAI request timed out or could not connect.", retryable=True) from exc

@@ -42,8 +42,8 @@ def build_report(
         A populated VerificationReport instance.
     """
     # 1. Count unique entities ------------------------------------------------
-    unique_claims: set[str] = {a.claim_id for a in assessments}
-    unique_refs: set[str] = {a.ref_id for a in assessments}
+    unique_claims: set[str] = {claim.claim_id for claim in claims}
+    unique_refs: set[str] = {link.ref_id for link in links if link.claim_id in unique_claims}
 
     # 2. Build issues list ----------------------------------------------------
     issues: list[str] = []

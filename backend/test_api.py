@@ -30,6 +30,29 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(self.client.get('/api/evidence/open-access?doi=10.1/test').status_code, 400)
 
 class ProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rate_limited_extraction_retains_citation(self):
+        from app.database import init_db
+        from app.pipeline import create_job, run_pipeline
+        from app.providers import ExtractionProviderError
+        from main import verify_claims, verify_report
+
+        init_db()
+        job = create_job('study.txt', 'text/plain')
+        sentence = 'Active learning improves examination performance [1].'
+        manuscript = f'Background.   {sentence}\n\nReferences\n\n[1] Freeman et al. (2014). Active learning increases student performance.'
+        error = ExtractionProviderError('OpenAI API request failed (HTTP 429).', stop_job_requests=True)
+        with patch('app.extraction.extract_claims_openai', new=AsyncMock(side_effect=error)):
+            await run_pipeline(job.job_id, manuscript.encode(), 'study.txt', 'text/plain')
+        report = await verify_report(job.job_id)
+        self.assertEqual(report['total_claims'], 1)
+        [row] = (await verify_claims(job.job_id))['rows']
+        self.assertEqual(row['text'], sentence)
+        self.assertEqual(row['marker'], '[1]')
+        self.assertIn('Freeman', row['reference'])
+        self.assertIn('429', row['extraction_error'])
+        self.assertIsNone(row['assessment'])
+        self.assertEqual(row['evidence'], [])
+
     async def test_partial_success_and_safe_errors(self):
         good = AsyncMock(return_value=[{'title':'Study','doi':'10.1/test'}])
         bad = AsyncMock(side_effect=httpx.ConnectError('URL contains api_key=secret'))

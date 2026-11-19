@@ -119,6 +119,7 @@ async def verify_claims(job_id: str):
             rows.append({
                 "id": link.link_id if link else claim.claim_id,
                 "text": claim.normalized_text,
+                "extraction_error": claim.extraction_error,
                 "marker": link.citation_marker if link else None,
                 "reference": ref.raw_entry if ref else None,
                 "doi": (source.canonical_doi if source else None) or (ref.doi if ref else None),

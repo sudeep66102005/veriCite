@@ -75,14 +75,12 @@ def _expand_numeric_marker(marker_text: str) -> list[int]:
 
 def _get_sentence_containing(text: str, char_pos: int) -> str:
     """Return the sentence from *text* that contains character position *char_pos*."""
-    sentences = _SENT_SPLIT_RE.split(text)
-    offset = 0
-    for sent in sentences:
-        end = offset + len(sent)
-        if offset <= char_pos <= end:
-            return sent
-        offset = end + 1  # +1 for the space consumed by split
-    return text[max(0, char_pos - 150): char_pos + 150]
+    start = 0
+    for boundary in _SENT_SPLIT_RE.finditer(text):
+        if boundary.start() > char_pos:
+            return text[start:boundary.start()].strip()
+        start = boundary.end()
+    return text[start:].strip()
 
 
 # ---------------------------------------------------------------------------
@@ -350,12 +348,19 @@ async def extract_claims_and_links(
     slots = asyncio.Semaphore(4)
     max_attempts = max(1, min(MAX_RETRIES, 2))
 
+    provider_blocker = None
+
     async def extract_marker(block_text: str, marker: str, ref_ids: list[str], span: str):
+        nonlocal provider_blocker
         for attempt in range(max_attempts):
             try:
                 async with slots:
+                    if provider_blocker:
+                        return [], provider_blocker
                     return await extract_claims_openai(block_text, marker, ref_ids, span), None
             except ExtractionProviderError as exc:
+                if exc.stop_job_requests:
+                    provider_blocker = str(exc)
                 if not exc.retryable or attempt + 1 == max_attempts:
                     return [], str(exc)
             await asyncio.sleep(2 ** attempt)
@@ -408,22 +413,9 @@ async def extract_claims_and_links(
                 f"block={block.block_id} marker='{marker_text}': "
                 f"OpenAI extraction failed: {last_error}"
             )
-            # Create a fallback link marked ambiguous
-            for rid in allowed_ref_ids:
-                link_id = f"lnk_{uuid.uuid4().hex[:12]}"
-                links.append(
-                    ClaimReferenceLink(
-                        link_id=link_id,
-                        claim_id="",  # no claim created
-                        ref_id=rid,
-                        citation_marker=marker_text,
-                        marker_char_start=cs,
-                        marker_char_end=ce,
-                        citation_group_id=f"group_{block.block_id}_{marker_index}",
-                        mapping_status=MappingStatus.ambiguous,
-                    )
-                )
-            continue
+            claim_dicts = [{"claim_text": clause_text, "original_span": clause_text, "ref_ids": marker_ref_ids}]
+            if not marker_ref_ids:
+                continue
 
         # Determine if the whole marker group is ambiguous
         is_ambiguous_group = (
@@ -438,6 +430,7 @@ async def extract_claims_and_links(
                 claim_id=claim_id,
                 document_id=block.document_id,
                 block_id=block.block_id,
+                extraction_error=last_error,
                 original_span=claim_dict.get("original_span", clause_text),
                 normalized_text=claim_dict.get("claim_text", ""),
                 char_start=None,

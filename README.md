@@ -25,20 +25,14 @@ npm run preview
 
 `build` runs strict TypeScript checks before Vite. Deploy `frontend/dist` on a static host. For Vercel, set the root directory to `frontend`, build command to `npm run build`, and output directory to `dist`. No keys or environment variables are required for browser-local analysis.
 
-## Technology plan and current scope
+## Verification backend
 
-| Layer | Technology | Role | Current scope |
-|---|---|---|---|
-| Frontend | React + TypeScript + Tailwind CSS | PDF upload UI, progress screen, claim cards, report | Implemented; typed components and Tailwind v4 Vite integration |
-| Backend | Python + FastAPI | Uploads and extraction/retrieval/verification orchestration | Future integration; existing discovery backend untouched |
-| PDF processing | PDF.js | Extract selectable PDF text in the browser | Implemented; scanned PDFs require OCR |
-| Reference matching | Crossref API | Publication metadata and DOI matching | Future integration; local citation mapping and sample sources now |
-| Source access | Unpaywall API + manual PDF upload | Locate accessible source papers | Manual local PDF attachment UI implemented; Unpaywall not called |
-| AI verification | One hosted LLM API | Extract claims and compare with retrieved evidence | Sample fixtures only; no provider selected or key required |
-| Data validation | Pydantic | Backend validation of verdict, explanation and evidence fields | Future backend; strict TypeScript plus runtime import validation now |
-| Database | Supabase Postgres | Documents, claims, references, results, reviews | Not connected; browser localStorage now |
-| File storage | Supabase Storage | Uploaded documents and retrieved source PDFs | Not connected; browser-memory File objects now |
-| Testing | pytest + manually checked examples | Backend citation mapping and verdict/evidence accuracy | Future backend tests; current frontend uses Node test runner + TypeScript and browser checks |
+The React workspace reads selectable PDF text with PDF.js. When connected to FastAPI it
+submits the manuscript, polls a verification job, and displays a result for each citation.
+The backend stores jobs and review evidence in SQLite. It resolves publications with Crossref,
+OpenAlex and Semantic Scholar and can use Unpaywall to locate full text. The configured
+Gemini model compares retrieved passages. Local extraction and the sample remain available
+without backend credentials.
 
 ## Eight frontend feature groups
 
@@ -77,63 +71,28 @@ Sample evidence is authored paraphrase, not retrieved quotations; sample confide
 6. Switch to text input and extract a custom paragraph with a reference list. Show its Unverified status.
 7. Export JSON/CSV and restore the JSON report.
 
-## Future API integration — no backend implementation in this change
+## Verify a manuscript
 
-Use the contracts in [`frontend/src/contracts.ts`](frontend/src/contracts.ts) when the backend is developed. They define future page locations, source passages, processing jobs, verified claims and review requests. UI/demo types live in `types.ts`; local demo operations live in `services.ts`.
+Run the backend as described in [the backend guide](backend/README.md).
+Set `VITE_API_URL` when building the frontend for a separate deployment.
+Submit text with `POST /api/verify`. Keep the returned access token in memory and
+send it as an Authorization bearer token for job status, claims and report requests.
+Private workspaces can set `VERIFICATION_ACCESS_KEY` on the backend and enter that code under Private workspace access in the document tab.
+Previously created jobs retain their existing private-link access.
 
-| Proposed endpoint | Frontend purpose |
-|---|---|
-| `POST /api/documents` | Send multipart document; receive document ID and job ID |
-| `GET /api/jobs/:id` | Real progress, partial completion and retryable errors |
-| `GET /api/documents/:id/claims` | Claim text, location, references, verdict, explanation and original evidence |
-| `POST /api/claims/:id/source-pdfs` | Attach a cited source PDF for retrieval/comparison |
-| `POST /api/claims/:id/reviews` | Persist reviewer decision and note |
-| `GET /api/documents/:id/report` | Export report with provenance and review history |
+Uncited statements and unmatched or ambiguous citations remain available for review.
+A verdict requires a passage from the matched publication. When a newer citing abstract
+explicitly revises the same finding, the report can show a **Possibly outdated** verdict
+with the newer publication and its passage. Coverage varies with open-access availability.
 
-The browser analysis uses `runAnalysis`. Keep fixtures in an explicit demo mode and retain unverified/unavailable-source states. Do not point this UI at the existing search API and treat candidate publications as verified evidence.
+The server accepts four active verification jobs across workers sharing its SQLite database
+and eight submissions per direct peer address per hour. Each job has a nine-minute deadline,
+up to eight compound-claim extraction requests and forty claim–reference assessments.
+Extra pairs stay visible for review. Behind a reverse proxy, clients may share an allowance.
 
-### Planned backend flow
-
-PyMuPDF extracts document text with page/bounding-box information → an LLM extracts structured claims → Crossref resolves references → Unpaywall or manual source PDFs provide permitted evidence → the LLM compares relevant source passages → Pydantic validates structured outputs → Supabase stores documents, sources, results and reviews.
-
-Every verdict must reference an actual retrieved passage. Missing evidence should produce Unverified; ambiguous matches should require human review. Assess numeric claims, population, study scope and limitations. Evaluate against manually checked examples before reporting calibrated confidence.
-
-### Credentials needed later
-
-- **Crossref:** public metadata API; configure an application contact as appropriate. [Official documentation](https://www.crossref.org/documentation/retrieve-metadata/rest-api/).
-- **Unpaywall:** contact email for API requests. [Official API documentation](https://unpaywall.org/products/api).
-- **One hosted LLM:** choose one provider; keep its API key in the backend only.
-- **Supabase:** project URL and client configuration when authentication is designed; backend privileged credentials remain server-only. Define Postgres and Storage row-level access policies before using real documents.
-
-Never put LLM keys or Supabase service-role keys in React, `VITE_*` variables, source control or report exports. Pricing, quotas and available models should be confirmed at integration time.
-
-## Code layout
-
-```text
-frontend/
-  index.html
-  vite.config.ts       Tailwind v4 Vite plugin
-  tsconfig.json        Strict TypeScript configuration
-  src/
-    main.tsx           React entry
-    App.tsx            Workspace and document workflow
-    Evidence.tsx       Evidence, manual attachments and review
-    Analytics.tsx      Metrics, charts, evidence reading and reference previews
-    PaperChat.tsx      Rule-based contextual result exploration
-    ui.tsx             Verdict badges, progress and downloads
-    types.ts           Typed demo data models
-    contracts.ts       Future backend contract types only
-    engine.ts          Extraction, fixtures and report helpers
-    services.ts        Local file validation, analysis and restoration
-    pdf.ts             Local PDF text extraction
-    engine.test.ts     Frontend regression tests
-    styles.css         Tailwind import, theme and reusable utility compositions
-backend/               Existing implementation, unchanged by this migration
-```
-
-## Validation and limits
-
-The TypeScript/test/build commands above check citation mapping, honest unverified output, CSV escaping, persisted state validation, PDF header/size validation, cancellation, distinct PDF contents and unreadable PDFs. Manual browser checks cover the visible upload/progress workflow, report views and review interactions. Frontend tests do not establish scientific accuracy or live API availability. PyMuPDF, Pydantic, Supabase integration and pytest verification examples belong to the future backend work.
+Run backend checks with `python -m unittest discover -s backend` and frontend checks with
+`npm test && npm run build` from `frontend/`. The acceptance manuscript and answer key are
+in [the verification benchmark](backend/fixtures/verification-benchmark.md).
 
 ## Connect the deployed frontend
 

@@ -35,7 +35,7 @@ async def assess_claim_reference_pair(
 
     try:
         result = await classify_claim_gemini(
-            claim.normalized_text, list(evidence.values()), source.coverage.value, source.matched_title or ""
+            claim.normalized_text, list(evidence.values()), source.coverage.value, source.matched_title or "", source.newer_works
         )
         flags = result["issue_flags"]
         explanation = result["explanation"]
@@ -59,6 +59,9 @@ async def assess_claim_reference_pair(
 
     assessment.issue_flags.extend(flags)
     assessment.explanation = explanation
+    if verdict == SemanticVerdict.POSSIBLY_OUTDATED:
+        assessment.explanation = "A newer publication must substantiate a freshness flag."
+        return assessment
     if verdict is None:
         return assessment
     if not passage_ids or any(pid not in evidence for pid in passage_ids):
@@ -71,4 +74,18 @@ async def assess_claim_reference_pair(
     assessment.assessment_status = AssessmentStatus.assessed
     assessment.semantic_verdict = verdict
     assessment.evidence_passage_ids = list(dict.fromkeys(passage_ids))
+    assessment.confidence_basis = ("Full-text passage from the matched paper." if source.coverage == CoverageStatus.full_text
+                                   else "Only part of the matched paper was available.")
+    quote = result.get("update_quote")
+    reason = result.get("update_reason")
+    if verdict in (SemanticVerdict.SUPPORTED, SemanticVerdict.PARTLY_SUPPORTED):
+        for work in source.newer_works:
+            if (work["url"] == result.get("update_url") and isinstance(quote, str)
+                    and len(quote.strip()) >= 20 and quote in work["text"] and isinstance(reason, str) and reason.strip()):
+                assessment.semantic_verdict = SemanticVerdict.POSSIBLY_OUTDATED
+                assessment.update_evidence = {k: work[k] for k in ("url", "title", "year")}
+                assessment.update_evidence["quote"] = quote
+                assessment.explanation += " " + reason
+                assessment.issue_flags.append("Review newer evidence")
+                break
     return assessment

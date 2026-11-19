@@ -40,5 +40,5 @@ export function report(state: Workspace): VerificationReport {
 }
 export function csv(rows: Claim[]): string {
  const cell=(v: unknown)=> { const text=String(v??''); return '"'+(/^[\s]*[=+@-]/.test(text)?"'"+text:text).replaceAll('"','""')+'"'; };
- return [['Claim','Verdict','Confidence','References','Evidence','Explanation'], ...rows.map(r=>[r.claim,r.status,r.confidence,r.references.join('; '),r.evidence,r.reason])].map(r=>r.map(cell).join(',')).join('\r\n');
+ return [['Claim','Verdict','Confidence','References','Evidence','Explanation','Source','Evidence strength basis','Newer source','Newer passage','Review flags'], ...rows.map(r=>[r.claim,r.status,r.confidence,r.references.join('; '),r.evidence,r.reason,r.source,r.confidenceBasis,r.updateEvidence?.url,r.updateEvidence?.quote,r.flags.join('; ')])].map(r=>r.map(cell).join(',')).join('\r\n');
 }

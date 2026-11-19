@@ -2,11 +2,13 @@
 @import 'tailwindcss';
 
 @theme {
+  --color-slate-400: #596b80;
+  --color-slate-500: #536477;
   --font-sans: 'DM Sans', sans-serif;
   --font-display: 'Manrope', sans-serif;
   --color-brand-50: #f1effc;
   --color-brand-100: #e4ddfb;
-  --color-brand-500: #8170c3;
+  --color-brand-500: #6956a9;
   --color-brand-700: #6548bc;
   --color-brand-900: #302957;
 }
@@ -26,3 +28,7 @@
   .eyebrow { @apply text-xs font-bold tracking-[0.17em] text-brand-500; }
   .section-label { @apply mb-3 mt-6 text-xs font-bold tracking-wider text-slate-400; }
 }
+
+.skip-link { position: fixed; top: .5rem; left: .5rem; z-index: 50; padding: .75rem; background: white; color: #302957; transform: translateY(-160%); }
+.skip-link:focus { transform: none; }
+label:has(input:focus-visible) { outline: 3px solid #6548bc; outline-offset: 3px; }

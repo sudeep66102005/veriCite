@@ -37,6 +37,9 @@ def _connect() -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 _DDL = """
+CREATE TABLE IF NOT EXISTS verification_slots (
+    token TEXT PRIMARY KEY, peer TEXT NOT NULL, started INTEGER NOT NULL, active INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS jobs (
     job_id TEXT PRIMARY KEY,
     data   TEXT NOT NULL
@@ -95,6 +98,11 @@ def init_db() -> None:
         conn = _connect()
         try:
             conn.executescript(_DDL)
+            conn.execute("CREATE INDEX IF NOT EXISTS links_by_document ON claim_reference_links(document_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS links_by_claim ON claim_reference_links(claim_id)")
+            conn.execute("""UPDATE claim_reference_links SET document_id =
+                (SELECT document_id FROM claims WHERE claims.claim_id = claim_reference_links.claim_id)
+                WHERE document_id = claim_id AND claim_id IN (SELECT claim_id FROM claims)""")
             conn.commit()
         finally:
             conn.close()
@@ -103,6 +111,33 @@ def init_db() -> None:
 # ---------------------------------------------------------------------------
 # Jobs
 # ---------------------------------------------------------------------------
+
+
+def reserve_verification(token: str, peer: str, now: int) -> bool:
+    """Coordinate concurrent workers sharing this database and expire interrupted jobs."""
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DELETE FROM verification_slots WHERE started <= ?", (now - 3600,))
+            active, recent = conn.execute("""SELECT
+                count(CASE WHEN active=1 AND started>? THEN 1 END),
+                count(CASE WHEN peer=? THEN 1 END) FROM verification_slots""", (now - 600, peer)).fetchone()
+            if active >= 4 or recent >= 8:
+                return False
+            conn.execute("INSERT INTO verification_slots VALUES (?, ?, ?, 1)", (token, peer, now))
+        return True
+    finally:
+        conn.close()
+
+
+def finish_verification(token: str) -> None:
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute("UPDATE verification_slots SET active=0 WHERE token=?", (token,))
+    finally:
+        conn.close()
 
 
 def save_job(job: VerificationJob) -> None:
@@ -233,14 +268,6 @@ def get_claims(document_id: str) -> list[Claim]:
 # ClaimReferenceLinks
 # ---------------------------------------------------------------------------
 
-def _link_document_id(link: ClaimReferenceLink) -> str:
-    """Derive a document_id for a link from its claim_id prefix convention."""
-    # claim_id is typically "doc_<document_id>_claim_<n>" — store claim_id as
-    # document_id key so we can query by it; callers that need by-document
-    # queries can filter externally. We store claim_id as the document_id column.
-    return link.claim_id
-
-
 def save_links(links: list[ClaimReferenceLink]) -> None:
     rows = [(lk.link_id, lk.claim_id, lk.claim_id, lk.model_dump_json()) for lk in links]
     with _lock:
@@ -248,21 +275,33 @@ def save_links(links: list[ClaimReferenceLink]) -> None:
         try:
             with conn:
                 conn.executemany(
-                    "INSERT OR REPLACE INTO claim_reference_links (link_id, claim_id, document_id, data) VALUES (?, ?, ?, ?)",
+                    "INSERT OR REPLACE INTO claim_reference_links (link_id, claim_id, document_id, data) VALUES (?, ?, (SELECT document_id FROM claims WHERE claim_id=?), ?)",
                     rows,
                 )
         finally:
             conn.close()
 
 
-def get_links(document_id: str) -> list[ClaimReferenceLink]:
-    """Return links where document_id matches (stored as claim_id column here)."""
+def document_links(document_id: str) -> dict[str, list[ClaimReferenceLink]]:
+    conn = _connect()
+    try:
+        groups = {}
+        for row in conn.execute("SELECT data FROM claim_reference_links WHERE document_id = ?", (document_id,)):
+            link = ClaimReferenceLink.model_validate_json(row["data"])
+            groups.setdefault(link.claim_id, []).append(link)
+        return groups
+    finally:
+        conn.close()
+
+
+def get_links(claim_id: str) -> list[ClaimReferenceLink]:
+    """Return bibliography links for one claim."""
     with _lock:
         conn = _connect()
         try:
             rows = conn.execute(
-                "SELECT data FROM claim_reference_links WHERE document_id = ?",
-                (document_id,),
+                "SELECT data FROM claim_reference_links WHERE claim_id = ?",
+                (claim_id,),
             ).fetchall()
         finally:
             conn.close()

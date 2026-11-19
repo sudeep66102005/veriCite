@@ -69,7 +69,7 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
 
         init_db()
         job = create_job('study.txt', 'text/plain')
-        sentence = 'Active learning improves examination performance [1].'
+        sentence = 'Active learning improves examination performance and increases retention [1].'
         manuscript = f'Background.   {sentence}\n\nReferences\n\n[1] Freeman et al. (2014). Active learning increases student performance.'
         error = ExtractionProviderError('Gemini API request failed (HTTP 429).', stop_job_requests=True)
         with patch('app.extraction.extract_claims_gemini', new=AsyncMock(side_effect=error)):

@@ -3,7 +3,7 @@
 Reads environment variables via python-dotenv.  All settings are exposed as
 module-level constants so callers can do::
 
-    from app.config import OPENAI_API_KEY, DB_PATH, ...
+    from app.config import GEMINI_API_KEY, DB_PATH, ...
 
 No I/O other than reading env vars happens at import time.
 """
@@ -24,11 +24,11 @@ _ENV_FILE: Path = _BACKEND_DIR / ".env"
 load_dotenv(dotenv_path=_ENV_FILE, override=False)
 
 # ---------------------------------------------------------------------------
-# OpenAI / LLM
+# Gemini / LLM
 # ---------------------------------------------------------------------------
 
-OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
 # ---------------------------------------------------------------------------
 # External provider credentials
@@ -69,8 +69,8 @@ MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))
 
 
 __all__ = [
-    "OPENAI_API_KEY",
-    "OPENAI_MODEL",
+    "GEMINI_API_KEY",
+    "GEMINI_MODEL",
     "CROSSREF_MAILTO",
     "OPENALEX_EMAIL",
     "SEMANTIC_SCHOLAR_API_KEY",

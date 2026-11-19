@@ -73,7 +73,7 @@ export default function App() {
       applyResult(next);
       const incomplete = next.claims.filter(claim => claim.flags.includes('Extraction incomplete')).length;
       if (incomplete) {
-        setMessage(`OpenAI extraction was unavailable for ${incomplete} claim–citation results. Their original cited text is in the report, marked Unverified.`);
+        setMessage(`Gemini extraction was unavailable for ${incomplete} claim–citation results. Their original cited text is in the report, marked Unverified.`);
         return;
       }
       setMessage(verificationEnabled ? `Verification returned ${next.claims.length} claim–citation results for ${next.document}.${issues ? " Some pipeline stages reported issues. Review unverified results." : ""}` : `Extracted ${next.claims.length} candidate claims locally. All remain unverified.`);

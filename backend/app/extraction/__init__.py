@@ -20,7 +20,7 @@ from app.models import (
     MappingStatus,
     Reference,
 )
-from app.providers import ExtractionProviderError, extract_claims_openai
+from app.providers import ExtractionProviderError, extract_claims_gemini
 from app.config import MAX_RETRIES
 
 # ---------------------------------------------------------------------------
@@ -357,7 +357,7 @@ async def extract_claims_and_links(
                 async with slots:
                     if provider_blocker:
                         return [], provider_blocker
-                    return await extract_claims_openai(block_text, marker, ref_ids, span), None
+                    return await extract_claims_gemini(block_text, marker, ref_ids, span), None
             except ExtractionProviderError as exc:
                 if exc.stop_job_requests:
                     provider_blocker = str(exc)
@@ -387,7 +387,7 @@ async def extract_claims_and_links(
                     f"block={block.block_id}: unmatched citation marker '{marker_text}'"
                 )
 
-        # Process each marker individually (call OpenAI per marker for precision)
+        # Process each marker individually (call Gemini per marker for precision)
         for marker_index, (marker_text, cs, ce, marker_ref_ids) in enumerate(markers):
             # Find the clause containing this marker
             clause_text = _get_sentence_containing(block.text, cs)
@@ -395,7 +395,7 @@ async def extract_claims_and_links(
             # Allowed ref_ids for this marker call
             allowed_ref_ids = marker_ref_ids if marker_ref_ids else all_ref_ids_for_block
             if not allowed_ref_ids:
-                # No refs resolved — record issue but skip OpenAI call
+                # No refs resolved — record issue but skip Gemini call
                 issues.append(
                     f"block={block.block_id}: no ref_ids for marker '{marker_text}'; skipping"
                 )
@@ -411,7 +411,7 @@ async def extract_claims_and_links(
         if last_error is not None:
             issues.append(
                 f"block={block.block_id} marker='{marker_text}': "
-                f"OpenAI extraction failed: {last_error}"
+                f"Gemini extraction failed: {last_error}"
             )
             claim_dicts = [{"claim_text": clause_text, "original_span": clause_text, "ref_ids": marker_ref_ids}]
             if not marker_ref_ids:

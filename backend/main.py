@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 import httpx
 from integrations.providers import SEARCH_PROVIDERS, search_all, unpaywall
-from app.config import OPENAI_API_KEY
+from app.config import GEMINI_API_KEY
 from app.pipeline import create_job, run_pipeline
 from app.database import init_db, get_job, get_claims, get_links, get_references, get_resolved_source, get_passages
 from app.models import JobState
@@ -62,8 +62,8 @@ class VerifyRequest(BaseModel):
 
 @app.post("/api/verify", status_code=202)
 async def verify(request: VerifyRequest):
-    if not OPENAI_API_KEY.strip():
-        raise HTTPException(status_code=503, detail="Verification is unavailable until OPENAI_API_KEY is configured on Render.")
+    if not GEMINI_API_KEY.strip():
+        raise HTTPException(status_code=503, detail="Verification is unavailable until GEMINI_API_KEY is configured on Render.")
     filename = request.filename if request.filename.lower().endswith((".txt", ".md")) else "document.txt"
     content = request.text.encode("utf-8")
     job = create_job(filename, "text/plain")

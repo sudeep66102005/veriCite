@@ -1,4 +1,4 @@
-"""OpenAI claim extraction and evidence assessment."""
+"""Gemini claim extraction and evidence assessment."""
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +6,7 @@ import json
 
 import httpx
 
-from app.config import OPENAI_API_KEY, OPENAI_MODEL, PROVIDER_TIMEOUT
+from app.config import GEMINI_API_KEY, GEMINI_MODEL, PROVIDER_TIMEOUT
 
 class ExtractionProviderError(RuntimeError):
     def __init__(self, message: str, *, retryable: bool = False, stop_job_requests: bool = False):
@@ -16,24 +16,23 @@ class ExtractionProviderError(RuntimeError):
 
 
 async def _request_json(prompt: str) -> dict:
-    if not OPENAI_API_KEY.strip():
-        raise ExtractionProviderError("OpenAI API key is missing.")
+    if not GEMINI_API_KEY.strip():
+        raise ExtractionProviderError("Gemini API key is missing.")
     try:
         async with asyncio.timeout(PROVIDER_TIMEOUT), httpx.AsyncClient(timeout=PROVIDER_TIMEOUT) as client:
             response = await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                headers={"Authorization": f"Bearer {GEMINI_API_KEY}"},
                 json={
-                    "model": OPENAI_MODEL,
+                    "model": GEMINI_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "response_format": {"type": "json_object"},
-                    "store": False,
                 },
             )
             response.raise_for_status()
             choice = response.json()["choices"][0]
             if choice["finish_reason"] != "stop" or choice["message"].get("refusal"):
-                raise ExtractionProviderError("OpenAI did not complete the requested assessment.")
+                raise ExtractionProviderError("Gemini did not complete the requested assessment.")
             result = json.loads(choice["message"]["content"])
             if not isinstance(result, dict):
                 raise ValueError("Expected JSON object")
@@ -41,23 +40,23 @@ async def _request_json(prompt: str) -> dict:
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
         raise ExtractionProviderError(
-            f"OpenAI API request failed (HTTP {code}).",
+            f"Gemini API request failed (HTTP {code}).",
             retryable=code in (408, 500, 502, 503, 504),
             stop_job_requests=code in (401, 403, 404, 429),
         ) from exc
     except (TimeoutError, httpx.TransportError) as exc:
-        raise ExtractionProviderError("OpenAI request timed out or could not connect.", retryable=True) from exc
+        raise ExtractionProviderError("Gemini request timed out or could not connect.", retryable=True) from exc
     except (ValueError, TypeError, IndexError, KeyError) as exc:
-        raise ExtractionProviderError("OpenAI returned an invalid JSON response.") from exc
+        raise ExtractionProviderError("Gemini returned an invalid JSON response.") from exc
 
 
-async def extract_claims_openai(
+async def extract_claims_gemini(
     paragraph_text: str,
     marked_span: str,
     allowed_ref_ids: list[str],
     original_span: str,
 ) -> list[dict]:
-    """Call OpenAI to extract atomic claims from *paragraph_text*.
+    """Call Gemini to extract atomic claims from *paragraph_text*.
 
     Returns a list of dicts, each with keys:
         claim_text, original_span, ref_ids, qualifiers
@@ -89,7 +88,7 @@ async def extract_claims_openai(
 
     items = (await _request_json(prompt)).get("claims")
     if not isinstance(items, list):
-        raise ExtractionProviderError("OpenAI returned an invalid claims list.")
+        raise ExtractionProviderError("Gemini returned an invalid claims list.")
 
     validated = []
     for item in items:
@@ -117,13 +116,13 @@ async def extract_claims_openai(
 # ---------------------------------------------------------------------------
 
 
-async def classify_claim_openai(
+async def classify_claim_gemini(
     claim_text: str,
     passages: list[dict],
     coverage: str,
     source_title: str,
 ) -> dict:
-    """Call OpenAI to classify evidence for *claim_text* against *passages*.
+    """Call Gemini to classify evidence for *claim_text* against *passages*.
 
     Each passage dict: {"passage_id": str, "text": str, "section": str|None,
                         "page": int|None}
@@ -208,6 +207,6 @@ async def classify_claim_openai(
 
 
 __all__ = [
-    "extract_claims_openai",
-    "classify_claim_openai",
+    "extract_claims_gemini",
+    "classify_claim_gemini",
 ]

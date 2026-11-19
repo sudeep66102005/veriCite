@@ -53,7 +53,7 @@ If your environment requires a SOCKS proxy, install the optional HTTPX dependenc
 | app/retrieval | Resolved source and atomic claim | Ranked passages from that specific source, with verbatim text and page or table locations |
 | app/verification | One claim–paper pair and its evidence | Support verdict or reason to abstain, issue flags, evidence IDs and review status |
 | app/reporting | Results and incomplete assessments | Manuscript-level counts, traceable per-claim results and review flags |
-| app/providers | Requests from pipeline stages | OpenAI extraction and classification, Crossref identity matching, OpenAlex source discovery, Semantic Scholar fallback |
+| app/providers | Requests from pipeline stages | Gemini extraction and classification, Crossref identity matching, OpenAlex source discovery, Semantic Scholar fallback |
 
 ## Planned API contract
 
@@ -73,6 +73,6 @@ For an existing Python web service using the repository root, use these settings
 | Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
 | Health Check Path | `/api/health` |
 
-Set `OPENAI_API_KEY` and `OPENAI_MODEL` in the backend service environment for
+Set `GEMINI_API_KEY` and `GEMINI_MODEL` in the backend service environment for
 live claim extraction and assessment. Contact details and optional provider
 settings are listed in `.env.example`.

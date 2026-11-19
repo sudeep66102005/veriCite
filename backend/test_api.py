@@ -40,8 +40,8 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
         job = create_job('study.txt', 'text/plain')
         sentence = 'Active learning improves examination performance [1].'
         manuscript = f'Background.   {sentence}\n\nReferences\n\n[1] Freeman et al. (2014). Active learning increases student performance.'
-        error = ExtractionProviderError('OpenAI API request failed (HTTP 429).', stop_job_requests=True)
-        with patch('app.extraction.extract_claims_openai', new=AsyncMock(side_effect=error)):
+        error = ExtractionProviderError('Gemini API request failed (HTTP 429).', stop_job_requests=True)
+        with patch('app.extraction.extract_claims_gemini', new=AsyncMock(side_effect=error)):
             await run_pipeline(job.job_id, manuscript.encode(), 'study.txt', 'text/plain')
         report = await verify_report(job.job_id)
         self.assertEqual(report['total_claims'], 1)

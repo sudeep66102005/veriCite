@@ -17,6 +17,7 @@ import httpx
 from app.config import (
     CROSSREF_MAILTO,
     MAX_RETRIES,
+    OPENALEX_API_KEY,
     OPENALEX_EMAIL,
     PROVIDER_TIMEOUT,
     SEMANTIC_SCHOLAR_API_KEY,
@@ -200,6 +201,9 @@ async def _openalex_lookup(
             params["mailto"] = OPENALEX_EMAIL
     else:
         return None, None, False, None
+
+    if OPENALEX_API_KEY:
+        params["api_key"] = OPENALEX_API_KEY
 
     try:
         resp = await client.get(url, params=params, timeout=PROVIDER_TIMEOUT)

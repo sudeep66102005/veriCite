@@ -61,3 +61,18 @@ If your environment requires a SOCKS proxy, install the optional HTTPX dependenc
 - `GET /verifications/{id}` returns processing status or the final report.
 
 The verification job endpoints above are planned. Both `uvicorn main:app` and `uvicorn app.main:app` serve the discovery API and `/health` from the backend directory.
+
+## Run on Render
+
+For an existing Python web service using the repository root, use these settings.
+
+| Setting | Value |
+|---|---|
+| Root Directory | Leave blank |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn --app-dir backend main:app --host 0.0.0.0 --port $PORT` |
+| Health Check Path | `/api/health` |
+
+Set `GEMINI_API_KEY` and `GEMINI_MODEL` in the backend service environment for
+live claim extraction and assessment. Contact details and optional provider
+settings are listed in `.env.example`.

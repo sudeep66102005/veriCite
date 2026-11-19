@@ -70,7 +70,7 @@ For an existing Python web service using the repository root, use these settings
 |---|---|
 | Root Directory | Leave blank |
 | Build Command | `pip install -r requirements.txt` |
-| Start Command | `uvicorn --app-dir backend main:app --host 0.0.0.0 --port $PORT` |
+| Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
 | Health Check Path | `/api/health` |
 
 Set `GEMINI_API_KEY` and `GEMINI_MODEL` in the backend service environment for

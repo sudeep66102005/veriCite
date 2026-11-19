@@ -1,12 +1,13 @@
 """veriCite academic research discovery and verification API."""
 import asyncio
+import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 import httpx
-from integrations.providers import SEARCH_PROVIDERS, search_all, unpaywall
+from integrations.providers import SEARCH_PROVIDERS, TIMEOUT, core_work, search_all, unpaywall
 from app.config import GEMINI_API_KEY
 from app.pipeline import create_job, run_pipeline
 from app.database import init_db, get_job, get_claims, get_links, get_references, get_resolved_source, get_passages
@@ -35,6 +36,28 @@ async def evidence_search(q: str = Query(min_length=3, max_length=500),
         return await search_all(q, limit, selected)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+@app.get("/api/evidence/core/works/{work_id}")
+async def core_work_details(work_id: int = Path(gt=0)):
+    if not os.getenv("CORE_API_KEY", "").strip():
+        raise HTTPException(status_code=503, detail="CORE_API_KEY must be configured")
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            return await core_work(client, work_id)
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status == 404:
+            raise HTTPException(status_code=404, detail="CORE work not found") from exc
+        if status == 429:
+            retry_after = exc.response.headers.get("Retry-After")
+            headers = {"Retry-After": retry_after} if retry_after else None
+            raise HTTPException(status_code=429, detail="CORE rate limit reached", headers=headers) from exc
+        raise HTTPException(status_code=502, detail=f"CORE returned HTTP {status}") from exc
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="CORE request timed out") from exc
+    except (httpx.RequestError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="CORE work details are unavailable") from exc
+
 
 @app.get("/api/evidence/open-access")
 async def open_access(doi: str = Query(min_length=3, max_length=250)):

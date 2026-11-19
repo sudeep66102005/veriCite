@@ -8,28 +8,45 @@ function restore(){try{const x=JSON.parse(localStorage.getItem('vericite-v1'));r
 function Badge({status}){return <span className={'badge '+status.toLowerCase().replaceAll(' ','-')}>{status}</span>}
 function download(name,content,type){const url=URL.createObjectURL(new Blob([content],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function Evidence({row,review,onReview}){const [note,setNote]=useState(review?.note||'');return <aside className="evidence panel"><div className="eyebrow">EVIDENCE INSPECTOR</div><h2>Behind the claim</h2><Badge status={row.status}/><blockquote>{row.claim}</blockquote><div className="section-label">SOURCE EVIDENCE</div><div className="excerpt">{row.evidence}<small>{row.section}</small></div><div className="section-label">WHY THIS VERDICT?</div><p>{row.reason}</p><div className="confidence"><ShieldCheck size={18}/><span>{row.confidence?`${row.confidence} illustrative confidence`:'Confidence unavailable'}</span></div><div className="section-label">MATCHED REFERENCE</div>{row.references.length?row.references.map(r=><p className="reference" key={r}>{r}</p>):<p>No matching reference found.</p>}{row.source&&<a className="source-link" href={row.source} target="_blank" rel="noreferrer">Inspect original publication <ExternalLink size={15}/></a>}<div className="review"><label htmlFor="note">Reviewer note</label><textarea id="note" value={note} onChange={e=>setNote(e.target.value)} placeholder="What needs a closer look?" rows={3}/><div className="actions"><button onClick={()=>onReview('Reviewed',note)}><Check size={16}/>Mark reviewed</button><button className="secondary" onClick={()=>onReview('Needs follow-up',note)}>Flag</button></div>{review&&<small>Review: {review.decision} · {new Date(review.at).toLocaleString()}</small>}</div></aside>}
-const sampleAnalytics = {
- counts:[48,62,12],
- verdicts:[['Supported',36],['Insufficient evidence',8],['Contradicted',4]],
- sections:[['Results',6],['Discussion',4],['Introduction',2]],
- rows:[
-  {claim:'Accuracy improved across all datasets.',section:'Results',markers:['[14]'],status:'Contradicted'},
-  {claim:'The method is more data-efficient than prior work.',section:'Discussion',markers:['[27]'],status:'Insufficient evidence'}
- ]
-};
+function ReferencePreview({entry,row}){
+ const doi=entry.match(/10\.\d{4,9}\/[^\s<>"\]]+/i)?.[0]?.replace(/[.,;]+$/,'');
+ return <details className="ref-preview"><summary>{entry.replace(/https?:\/\/\S+/g,'').trim()||entry}</summary>
+ <div><strong>Reference</strong><p>{entry}</p><strong>Why this reference was cited</strong><p>{row.status==='Unverified'?'The citation in the claim maps to this bibliography entry. Its source passage has yet to be verified.':row.reason}</p>
+ {doi&&<a href={'https://doi.org/'+doi} target="_blank" rel="noreferrer">Open original article ↗</a>}</div></details>;
+}
+function EvidenceReading({claims,index,setIndex,sample}){
+ const row=claims[index]||claims[0];
+ if(!row)return null;
+ const supports=['Supported','Partly supported'].includes(row.status);
+ const challenges=row.status==='Contradictory';
+ const limitation=['Partly supported','Unsupported','Possibly outdated'].includes(row.status);
+ const cite=row.references.map(entry=><ReferencePreview key={entry} entry={entry} row={row}/>);
+ return <section id="evidence-reading" className="analytics-card reading"><h2>Evidence review</h2>
+ <label>Claim<select value={claims.indexOf(row)} onChange={e=>setIndex(Number(e.target.value))}>{claims.map((item,i)=><option key={item.id} value={i}>{i+1}. {item.claim}</option>)}</select></label>
+ <article><h3>{row.claim}</h3>{sample&&<small>Sample analysis · illustrative paraphrases</small>}
+ <p><strong>Short answer. </strong>{row.reason}</p>
+ <h4>Evidence for</h4><p>{supports?row.evidence:'No supporting passage is available for this claim.'}</p>{supports&&cite}
+ <h4>Evidence against or null</h4><p>{challenges?row.evidence:'No contradictory or null finding is recorded for this claim.'}</p>{challenges&&cite}
+ {limitation&&<><h4>Evidence limitations</h4><p>{row.evidence}</p>{cite}</>}
+ <h4>References</h4>{cite.length?cite:<p>No bibliography entry was matched to this claim.</p>}
+ </article></section>;
+}
 function Bars({title,items,sections=false}){
  const max=Math.max(1,...items.map(([,count])=>count));
  return <section className="analytics-card"><h2>{title}</h2><div className="bars">{items.map(([label,count])=><div className="bar-row" key={label}><span>{label}</span><div><i className={sections?'section-bar':label==='Supported'?'green':/Contradic/.test(label)?'red':'amber'} style={{width:(count/max*83)+'%'}}/><span>{count}</span></div></div>)}{!items.length&&<p>No claims to show.</p>}</div></section>;
 }
 function Analytics({state,paper,onPaper,inspect}){
- const rows=state.claims.filter(r=>state.reviews[r.id]?.decision!=='Reviewed'&&(r.status!=='Supported'||state.reviews[r.id]?.decision==='Needs follow-up'));
- const current={counts:[state.claims.length,state.claims.reduce((n,r)=>n+r.markers.length,0),rows.length],verdicts:statuses.map(v=>[v,state.claims.filter(r=>r.status===v).length]).filter(([,n])=>n),sections:rows.length?[['Unassigned',rows.length]]:[],rows};
  const demo=paper==='sample';
- const data=demo?sampleAnalytics:current;
- return <><h1>Visual Analytics</h1><label className="paper-picker">Paper<select value={paper} onChange={e=>onPaper(e.target.value)}><option value="sample">Sample research paper</option><option value="current">{state.analyzedTitle}</option><option value="upload">Upload a paper…</option></select></label>
- <div className="metric-grid">{[['Claims analyzed',FileText], [demo?'Citations checked':'Citations detected',LinkIcon],['Claims needing review',AlertTriangle]].map(([label,Icon],i)=><section className="analytics-card metric" key={label}><h2>{label}</h2><strong>{data.counts[i]}</strong><span className={'metric-icon tone-'+i}><Icon/></span></section>)}</div>
+ const claims=demo?sampleClaims():state.claims;
+ const reviews=demo?{}:state.reviews;
+ const [index,setIndex]=useState(0);
+ const rows=claims.filter(r=>reviews[r.id]?.decision!=='Reviewed'&&(r.status!=='Supported'||reviews[r.id]?.decision==='Needs follow-up'));
+ const data={counts:[claims.length,claims.reduce((n,r)=>n+r.markers.length,0),rows.length],verdicts:statuses.map(v=>[v,claims.filter(r=>r.status===v).length]).filter(([,n])=>n),sections:rows.length?[['Unassigned',rows.length]]:[],rows};
+ return <><h1>Visual Analytics</h1><label className="paper-picker">Paper<select value={paper} onChange={e=>{setIndex(0);onPaper(e.target.value)}}><option value="sample">Sample research paper</option><option value="current">{state.analyzedTitle}</option><option value="upload">Upload a paper…</option></select></label>
+ <div className="metric-grid">{[['Claims analyzed',FileText], ['Citations detected',LinkIcon],['Claims needing review',AlertTriangle]].map(([label,Icon],i)=><section className="analytics-card metric" key={label}><h2>{label}</h2><strong>{data.counts[i]}</strong><span className={'metric-icon tone-'+i}><Icon/></span></section>)}</div>
  <div className="chart-grid"><Bars title="Claim verdicts" items={data.verdicts}/><Bars title="Review by section" items={data.sections} sections/></div>
- <section className="analytics-card review-table"><h2>Claims needing review</h2><div><table><thead><tr>{['Claim excerpt','Section','Citation','Verdict'].map(t=><th key={t}>{t}</th>)}</tr></thead><tbody>{data.rows.map(r=><tr key={r.id||r.claim}><td>{demo?r.claim:<button onClick={()=>inspect(r.id)}>{r.claim}</button>}</td><td>{demo?r.section:'Unassigned'}</td><td className="citation">{r.markers.join(', ')||'—'}</td><td><span className={'result-chip '+(/Contradic/.test(r.status)?'negative':'caution')}>{r.status}</span></td></tr>)}</tbody></table>{!data.rows.length&&<p>No claims need review.</p>}</div></section></>;
+ <EvidenceReading claims={claims} index={index} setIndex={setIndex} sample={demo||state.mode==='Sample demo'}/>
+ <section className="analytics-card review-table"><h2>Claims needing review</h2><div><table><thead><tr>{['Claim excerpt','Section','Citation','Verdict'].map(t=><th key={t}>{t}</th>)}</tr></thead><tbody>{data.rows.map(r=><tr key={r.id||r.claim}><td>{demo?r.claim:<button onClick={()=>inspect(r.id)}>{r.claim}</button>}</td><td>Unassigned</td><td className="citation">{r.markers.length?<button onClick={()=>{setIndex(claims.indexOf(r));document.getElementById('evidence-reading')?.scrollIntoView({block:'start'})}}>{r.markers.join(', ')}</button>:'—'}</td><td><span className={'result-chip '+(/Contradic/.test(r.status)?'negative':'caution')}>{r.status}</span></td></tr>)}</tbody></table>{!data.rows.length&&<p>No claims need review.</p>}</div></section></>;
 }
 function App(){
  const [state,setState]=useState(restore),[tab,setTab]=useState('Visual Analytics'),[paper,setPaper]=useState(()=>state.mode==='Sample demo'?'sample':'current'),[thread,setThread]=useState([]),[question,setQuestion]=useState(''),[selected,setSelected]=useState(null),[query,setQuery]=useState(''),[filter,setFilter]=useState('All verdicts'),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);

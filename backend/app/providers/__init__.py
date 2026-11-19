@@ -131,7 +131,6 @@ async def classify_claim_gemini(
     Returns a dict with keys: verdict, evidence_passage_ids, explanation,
     issue_flags.  On any error, returns a safe fallback dict.
     """
-    valid_passage_ids = {p["passage_id"] for p in passages}
 
     # Build numbered passage block
     passage_lines: list[str] = []
@@ -198,14 +197,7 @@ async def classify_claim_gemini(
             "issue_flags": ["provider_error"],
         }
 
-    # Validate passage_ids — only keep ones actually in provided list
-    raw_ids = result.get("evidence_passage_ids", [])
-    result["evidence_passage_ids"] = (
-        [pid for pid in raw_ids if isinstance(pid, str) and pid in valid_passage_ids]
-        if isinstance(raw_ids, list)
-        else []
-    )
-
+    # The assessment layer validates the entire list against this specific source.
     # Ensure required keys exist with sane defaults
     result.setdefault("verdict", None)
     result.setdefault("explanation", "")

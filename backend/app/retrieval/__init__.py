@@ -73,21 +73,9 @@ def _lexical_boost(claim: str, passage_text: str) -> float:
 
 
 def _chunk_abstract(text: str) -> list[str]:
-    """Split abstract into sentence chunks of at least 20 chars."""
-    raw = re.split(r"\.\s+", text)
-    chunks = []
-    for s in raw:
-        s = s.strip()
-        if len(s) >= 20:
-            chunks.append(s if s.endswith(".") else s + ".")
-    if not chunks and len(text) >= 20:
-        chunks = [text]
-    return chunks
+    """Preserve source punctuation and short findings when returning quoted evidence."""
+    return [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
 
-
-# ---------------------------------------------------------------------------
-# Abstract fetchers (fallback when no PDF)
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Download

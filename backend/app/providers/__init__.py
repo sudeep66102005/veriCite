@@ -1,34 +1,12 @@
-"""Gemini LLM provider functions for CiteVerify.
-
-Exposes two async helpers used by the extraction and verification stages.
-No new packages are installed — google-genai is already in requirements.txt.
-"""
+"""OpenAI claim extraction and evidence assessment."""
 from __future__ import annotations
 
 import asyncio
 import json
-import logging
 
-import google.genai as genai
-from google.genai.errors import APIError
+import httpx
 
-from app.config import GEMINI_API_KEY, GEMINI_MODEL, PROVIDER_TIMEOUT
-
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Internal helper
-# ---------------------------------------------------------------------------
-
-
-def _make_client() -> genai.Client:
-    return genai.Client(api_key=GEMINI_API_KEY)
-
-
-# ---------------------------------------------------------------------------
-# Stage 2 – Claim extraction
-# ---------------------------------------------------------------------------
-
+from app.config import OPENAI_API_KEY, OPENAI_MODEL, PROVIDER_TIMEOUT
 
 class ExtractionProviderError(RuntimeError):
     def __init__(self, message: str, *, retryable: bool = False):
@@ -36,20 +14,54 @@ class ExtractionProviderError(RuntimeError):
         self.retryable = retryable
 
 
-async def extract_claims_gemini(
+async def _request_json(prompt: str) -> dict:
+    if not OPENAI_API_KEY.strip():
+        raise ExtractionProviderError("OpenAI API key is missing.")
+    try:
+        async with asyncio.timeout(PROVIDER_TIMEOUT), httpx.AsyncClient(timeout=PROVIDER_TIMEOUT) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                json={
+                    "model": OPENAI_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                    "store": False,
+                },
+            )
+            response.raise_for_status()
+            choice = response.json()["choices"][0]
+            if choice["finish_reason"] != "stop" or choice["message"].get("refusal"):
+                raise ExtractionProviderError("OpenAI did not complete the requested assessment.")
+            result = json.loads(choice["message"]["content"])
+            if not isinstance(result, dict):
+                raise ValueError("Expected JSON object")
+            return result
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        raise ExtractionProviderError(
+            f"OpenAI API request failed (HTTP {code}).",
+            retryable=code in (408, 500, 502, 503, 504),
+        ) from exc
+    except (TimeoutError, httpx.TransportError) as exc:
+        raise ExtractionProviderError("OpenAI request timed out or could not connect.", retryable=True) from exc
+    except (ValueError, TypeError, IndexError, KeyError) as exc:
+        raise ExtractionProviderError("OpenAI returned an invalid JSON response.") from exc
+
+
+async def extract_claims_openai(
     paragraph_text: str,
     marked_span: str,
     allowed_ref_ids: list[str],
     original_span: str,
 ) -> list[dict]:
-    """Call Gemini to extract atomic claims from *paragraph_text*.
+    """Call OpenAI to extract atomic claims from *paragraph_text*.
 
     Returns a list of dicts, each with keys:
         claim_text, original_span, ref_ids, qualifiers
 
     Any item whose ref_ids contain values not in *allowed_ref_ids* is filtered
-    out.  Returns [] on empty or parse-failure.  Raises RuntimeError on API
-    error.
+    out.  Returns [] when no claims are found. Raises ExtractionProviderError if the request fails.
     """
     allowed_set = set(allowed_ref_ids)
 
@@ -59,56 +71,41 @@ async def extract_claims_gemini(
         "linked to the citations. Each atomic claim must be a single verifiable "
         "assertion with its qualifiers, units, comparators, population, and time point "
         "preserved. Do not merge multiple assertions into one claim.\n\n"
-        "Return a JSON array. Each element: "
+        "Return a JSON object with a claims array. Each array element: "
         '{"claim_text": str, "original_span": str, "ref_ids": [str], "qualifiers": str}\n'
         "- claim_text: normalized atomic assertion\n"
         "- original_span: exact substring of the paragraph that contains this claim\n"
         "- ref_ids: subset of the allowed_ref_ids that this claim specifically applies "
         "to (may be all of them if ambiguous)\n"
         "- qualifiers: any important qualifiers (population, time, units, negation)\n\n"
-        "If no verifiable claims are found, return [].\n"
+        "If no verifiable claims are found, return a JSON object with an empty claims array.\n"
         f"Important: ref_ids must only contain values from: {allowed_ref_ids}\n\n"
         f"Paragraph:\n{paragraph_text}\n\n"
         f"Marked citation span: {marked_span}\n"
         f"Representative clause: {original_span}"
     )
 
-    if not GEMINI_API_KEY:
-        raise ExtractionProviderError("Gemini API key is missing.")
-    try:
-        async with asyncio.timeout(PROVIDER_TIMEOUT), _make_client().aio as client:
-            response = await client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-                config={"response_mime_type": "application/json"},
-            )
-            raw = response.text or "[]"
-    except APIError as exc:
-        code = exc.code
-        raise ExtractionProviderError(
-            f"Gemini rejected the extraction request (HTTP {code}).",
-            retryable=code in (408, 500, 502, 503, 504),
-        ) from exc
-    except TimeoutError as exc:
-        raise ExtractionProviderError("Gemini extraction timed out.", retryable=True) from exc
-    except Exception as exc:
-        raise ExtractionProviderError("Gemini extraction request failed.") from exc
+    items = (await _request_json(prompt)).get("claims")
+    if not isinstance(items, list):
+        raise ExtractionProviderError("OpenAI returned an invalid claims list.")
 
-    try:
-        items: list[dict] = json.loads(raw)
-        if not isinstance(items, list):
-            return []
-    except json.JSONDecodeError:
-        logger.warning("extract_claims_gemini: JSON parse failure; raw=%r", raw[:200])
-        return []
-
-    # Validate: drop any ref_ids outside allowed_ref_ids (keep item, prune ids)
-    validated: list[dict] = []
+    validated = []
     for item in items:
-        ref_ids = item.get("ref_ids", [])
-        if isinstance(ref_ids, list):
-            item["ref_ids"] = [r for r in ref_ids if r in allowed_set]
-        validated.append(item)
+        if not isinstance(item, dict):
+            continue
+        text = item.get("claim_text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        original = item.get("original_span")
+        ref_ids = item.get("ref_ids")
+        matched = [
+            ref_id for ref_id in ref_ids if isinstance(ref_id, str) and ref_id in allowed_set
+        ] if isinstance(ref_ids, list) else []
+        validated.append({
+            "claim_text": text,
+            "original_span": original if isinstance(original, str) and original else original_span,
+            "ref_ids": matched,
+        })
 
     return validated
 
@@ -118,13 +115,13 @@ async def extract_claims_gemini(
 # ---------------------------------------------------------------------------
 
 
-async def classify_claim_gemini(
+async def classify_claim_openai(
     claim_text: str,
     passages: list[dict],
     coverage: str,
     source_title: str,
 ) -> dict:
-    """Call Gemini to classify evidence for *claim_text* against *passages*.
+    """Call OpenAI to classify evidence for *claim_text* against *passages*.
 
     Each passage dict: {"passage_id": str, "text": str, "section": str|None,
                         "page": int|None}
@@ -183,14 +180,8 @@ async def classify_claim_gemini(
     )
 
     try:
-        client = _make_client()
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config={"response_mime_type": "application/json"},
-        )
-        raw = response.text or "{}"
-    except Exception as exc:
+        result = await _request_json(prompt)
+    except ExtractionProviderError as exc:
         return {
             "verdict": None,
             "evidence_passage_ids": [],
@@ -198,21 +189,10 @@ async def classify_claim_gemini(
             "issue_flags": ["provider_error"],
         }
 
-    try:
-        result: dict = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning("classify_claim_gemini: JSON parse failure; raw=%r", raw[:200])
-        return {
-            "verdict": None,
-            "evidence_passage_ids": [],
-            "explanation": "JSON parse failure from Gemini.",
-            "issue_flags": ["provider_error"],
-        }
-
     # Validate passage_ids — only keep ones actually in provided list
     raw_ids = result.get("evidence_passage_ids", [])
     result["evidence_passage_ids"] = (
-        [pid for pid in raw_ids if pid in valid_passage_ids]
+        [pid for pid in raw_ids if isinstance(pid, str) and pid in valid_passage_ids]
         if isinstance(raw_ids, list)
         else []
     )
@@ -226,6 +206,6 @@ async def classify_claim_gemini(
 
 
 __all__ = [
-    "extract_claims_gemini",
-    "classify_claim_gemini",
+    "extract_claims_openai",
+    "classify_claim_openai",
 ]

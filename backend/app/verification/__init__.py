@@ -5,7 +5,7 @@ from app.models import (
     Assessment, AssessmentStatus, Claim, CoverageStatus, IdentityStatus, Passage,
     ResolvedSource, SemanticVerdict,
 )
-from app.providers import classify_claim_gemini
+from app.providers import classify_claim_openai
 
 
 async def assess_claim_reference_pair(
@@ -34,7 +34,7 @@ async def assess_claim_reference_pair(
         return assessment
 
     try:
-        result = await classify_claim_gemini(
+        result = await classify_claim_openai(
             claim.normalized_text, list(evidence.values()), source.coverage.value, source.matched_title or ""
         )
         flags = result["issue_flags"]

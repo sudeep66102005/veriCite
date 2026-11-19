@@ -35,7 +35,7 @@ export function report(state: Workspace): VerificationReport {
    ? 'This legacy simulation used illustrative sample claims and did not parse the selected PDF.'
    : state.mode === 'Sample demo'
      ? 'Sample evidence consists of illustrative paraphrases. Human review is required.'
-     : 'Candidate claims were extracted locally. Evidence retrieval and verification require further review.',
+     : state.mode === 'API verification' ? 'Verdicts describe available evidence from cited sources. Human review is required.' : 'Candidate claims were extracted locally. Evidence retrieval and verification require further review.',
  attachmentNotice:'Attachment metadata only; PDF bytes are held in browser memory and are not included in this report or retained after reload.'};
 }
 export function csv(rows: Claim[]): string {

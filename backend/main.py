@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import httpx
 from integrations.providers import SEARCH_PROVIDERS, search_all, unpaywall
 from app.pipeline import create_job, run_pipeline
-from app.database import init_db, get_job, get_claims
+from app.database import init_db, get_job, get_claims, get_links, get_references, get_resolved_source, get_passages
 from app.models import JobState
 
 load_dotenv()
@@ -18,7 +18,7 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="veriCite Evidence API", version="0.1.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://localhost:5173"],
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://localhost:5173", "https://veri-cite-two.vercel.app"],
                    allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 @app.get("/api/health")
@@ -91,7 +91,39 @@ async def verify_claims(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     if not job.report or not job.report.get("document_id"):
         return {"claims": []}
-    return {"claims": [claim.model_dump(mode="json") for claim in get_claims(job.report["document_id"])]}
+    document_id = job.report["document_id"]
+    claims = get_claims(document_id)
+    references = {ref.ref_id: ref for ref in get_references(document_id)}
+    assessments = {(item["claim_id"], item["ref_id"]): item for item in job.report["assessments"]}
+    sources = {ref_id: get_resolved_source(ref_id) for ref_id in references}
+    passages = {
+        passage.passage_id: passage
+        for source in sources.values() if source
+        for passage in get_passages(source.source_id)
+    }
+    rows = []
+    for claim in claims:
+        links = get_links(claim.claim_id)
+        for link in links or [None]:
+            ref = references.get(link.ref_id) if link else None
+            source = sources.get(ref.ref_id) if ref else None
+            assessment = assessments.get((claim.claim_id, ref.ref_id)) if ref else None
+            evidence = [
+                passages[pid].model_dump(mode="json")
+                for pid in (assessment or {}).get("evidence_passage_ids", [])
+                if pid in passages and source and passages[pid].source_id == source.source_id
+            ]
+            rows.append({
+                "id": link.link_id if link else claim.claim_id,
+                "text": claim.normalized_text,
+                "marker": link.citation_marker if link else None,
+                "reference": ref.raw_entry if ref else None,
+                "doi": (source.canonical_doi if source else None) or (ref.doi if ref else None),
+                "mapping": link.mapping_status if link else None,
+                "assessment": assessment,
+                "evidence": evidence,
+            })
+    return {"claims": [claim.model_dump(mode="json") for claim in claims], "rows": rows}
 
 
 @app.get("/api/verify/{job_id}/report")

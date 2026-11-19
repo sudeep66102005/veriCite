@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { extract, sampleClaims, csv, report, initialWorkspace } from './engine';
-import { decodeWorkspace, runAnalysis, validatePdf } from './services';
+import { decodeWorkspace, runAnalysis, runVerification, validatePdf } from './services';
 
 test('maps numeric citations without treating bibliography as claims', () => {
  const rows = extract('An intervention improves results [1].\nReferences\n[1] Smith 2020. Study.');
@@ -88,4 +88,34 @@ test('different PDF contents produce different claims and references even with t
 test('unreadable and textless PDFs fail without returning a sample report', async () => {
  await assert.rejects(analyzePdf(new File(['%PDF-1.4\n'], 'broken.pdf')), /Could not read this PDF/);
  await assert.rejects(analyzePdf(makePdf([])), /no selectable text/);
+});
+
+test('verification submits manuscript text and only displays verdicts with traceable evidence', async t => {
+ const manuscript = 'Solar panels power the observatory [1].';
+ const base = {
+  id: 'link-1', text: manuscript, marker: '[1]', reference: '[1] Solar power study.',
+  doi: '10.1234/study', mapping: 'mapped',
+  assessment: { assessment_status: 'assessed', semantic_verdict: 'SUPPORTED', explanation: 'The source reports the same result.', issue_flags: [] },
+ };
+ const fetch = t.mock.method(globalThis, 'fetch', async (path: string, request?: RequestInit) => {
+  if (path === '/api/verify') {
+   assert.equal(request?.method, 'POST');
+   assert.equal(JSON.parse(String(request.body)).text, manuscript);
+   return Response.json({ job_id: 'job-1' }, { status: 202 });
+  }
+  if (path === '/api/verify/job-1') return Response.json({ job_state: 'completed', report: { stage_errors: [] } });
+  assert.equal(path, '/api/verify/job-1/claims');
+  return Response.json({ rows: [
+   { ...base, evidence: [{ verbatim_text: manuscript, page: 2, section: 'Results' }] },
+   { ...base, id: 'link-2', evidence: [] },
+  ] });
+ });
+ const { workspace } = await runVerification(
+  { kind: 'text', title: 'Research test', text: manuscript, file: null }, () => {}, new AbortController().signal
+ );
+ assert.equal(fetch.mock.calls.length, 3);
+ assert.deepEqual(workspace.claims.map(row => row.status), ['Supported', 'Unverified']);
+ assert.equal(workspace.claims[0].section, 'Results · Page 2');
+ assert.equal(workspace.claims[0].source, 'https://doi.org/10.1234/study');
+ assert.deepEqual(decodeWorkspace(JSON.stringify(workspace)), workspace);
 });

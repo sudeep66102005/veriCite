@@ -2,7 +2,7 @@
 
 **React + TypeScript + Tailwind CSS frontend** for INNOVEDGE Problem 03: CiteVerify — Scientific Claim and Citation Verification System.
 
-The browser workspace extracts candidate claims and maps simple citations from research PDFs and plain text. It includes visual analytics, paper chat, source previews, manual source-PDF attachments, human review and report export. The standalone backend is separate from this browser workflow.
+The browser workspace extracts candidate claims and maps simple citations from research PDFs and plain text. It includes visual analytics, paper chat, source previews, manual source-PDF attachments, human review and report export. The workspace can send extracted document text to the verification backend.
 
 ## Run
 
@@ -65,7 +65,7 @@ Sample evidence is authored paraphrase, not retrieved quotations; sample confide
 - PDF bytes and object URLs live only in browser memory and are released when removed/replaced or the app closes. After reload, source attachments explicitly show “Metadata only — reattach to open.”
 - JSON exports contain claims, notes, filenames and other report metadata, but not PDF bytes. Keep this in mind when sharing a report.
 - Loading a sample or completing a new analysis replaces the current report and its review history. Export JSON first if you want to keep it; it can be restored later.
-- No research API, LLM, Supabase or backend calls are made. Google Fonts fetches font assets, with system font fallbacks available.
+- When backend verification is enabled, manuscript text is sent to the backend and claim excerpts may be processed by its configured model. Google Fonts fetches font assets, with system font fallbacks available.
 
 ## Three-minute demonstration
 
@@ -134,3 +134,11 @@ backend/               Existing implementation, unchanged by this migration
 ## Validation and limits
 
 The TypeScript/test/build commands above check citation mapping, honest unverified output, CSV escaping, persisted state validation, PDF header/size validation, cancellation, distinct PDF contents and unreadable PDFs. Manual browser checks cover the visible upload/progress workflow, report views and review interactions. Frontend tests do not establish scientific accuracy or live API availability. PyMuPDF, Pydantic, Supabase integration and pytest verification examples belong to the future backend work.
+
+## Connect the deployed frontend
+
+Set `VITE_API_URL` to the public Render backend origin in Vercel and rebuild the
+frontend. The Render backend allows cross-origin requests from
+`https://veri-cite-two.vercel.app`. Local Vite development uses its existing
+proxy to port 8000 when no API URL is configured. Production builds without an
+API URL use local extraction. Verified results are shown per claim and cited source.

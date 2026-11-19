@@ -156,63 +156,26 @@ async def _download_pdf(
 # ---------------------------------------------------------------------------
 
 def _parse_pdf(tmp_path: Path) -> list[tuple[str, str | None, int | None, str | None]]:
-    """
-    Parse a PDF with Docling.
-    Returns list of (text, section, page, table_context).
-    """
-    try:
-        from docling.document_converter import DocumentConverter
+    """Read selectable source text and preserve the printed PDF page location."""
+    import pymupdf
 
-        converter = DocumentConverter()
-        result = converter.convert(str(tmp_path))
-        doc = result.document
-
-        chunks: list[tuple[str, str | None, int | None, str | None]] = []
-        current_section: str | None = None
-
-        for item, level in doc.iterate_items():
-            # Determine section from headings
-            item_type = type(item).__name__.lower()
-            text_content: str = ""
-            page_num: int | None = None
-            table_context: str | None = None
-
-            # Extract page number if available
-            if hasattr(item, "prov") and item.prov:
-                try:
-                    page_num = item.prov[0].page_no
-                except (IndexError, AttributeError):
-                    pass
-
-            if "heading" in item_type or "section" in item_type:
-                if hasattr(item, "text"):
-                    current_section = item.text
-                continue  # don't emit headings as passages
-
-            if "table" in item_type:
-                try:
-                    text_content = item.export_to_markdown()
-                    table_context = text_content[:200] if text_content else None
-                except Exception:
-                    try:
-                        text_content = str(item)
-                    except Exception:
-                        continue
-            elif hasattr(item, "text"):
-                text_content = item.text or ""
-            else:
-                try:
-                    text_content = str(item)
-                except Exception:
+    chunks = []
+    section = None
+    with pymupdf.open(tmp_path) as document:
+        if document.needs_pass:
+            return []
+        for page in document:
+            for block in page.get_text("blocks", sort=True):
+                if block[6] != 0:
                     continue
-
-            text_content = text_content.strip()
-            if len(text_content) >= 20:
-                chunks.append((text_content, current_section, page_num, table_context))
-
-        return chunks
-    except Exception:
-        return []
+                text = block[4].strip()
+                if re.fullmatch(r"(?:[0-9.]+\s*)?(?:abstract|introduction|results|discussion|methods|conclusions?|limitations|references)", text, re.I):
+                    section = text
+                elif len(text) >= 20:
+                    # Preserve verbatim excerpts while bounding individual model inputs.
+                    for start in range(0, len(text), 2000):
+                        chunks.append((text[start:start + 2000], section, page.number + 1, None))
+    return chunks
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +193,19 @@ def _rank_passages(
     claims_text: list[str],
     top_k: int = 10,
 ) -> list[Passage]:
-    if not passages or not claims_text:
+    if len(passages) <= top_k or not claims_text:
         return passages
+    if not EMBEDDING_MODEL:
+        # Weight terms by rarity in this paper, including numbers and units.
+        from collections import Counter
+        from math import log1p
+        tokens = [set(re.findall(r"\w+", p.verbatim_text.casefold())) for p in passages]
+        frequency = Counter(term for terms in tokens for term in terms)
+        queries = [set(re.findall(r"\w+", claim.casefold())) for claim in claims_text]
+        weights = {term: log1p(len(passages) / count) for term, count in frequency.items()}
+        scores = [max(sum(weights[t] for t in terms & query) for query in queries) for terms in tokens]
+        indices = sorted(range(len(passages)), key=scores.__getitem__, reverse=True)[:top_k]
+        return [passages[i] for i in indices]
 
     passage_texts = [p.verbatim_text for p in passages]
     passage_embeddings = _embed_texts(passage_texts)
@@ -350,7 +324,7 @@ async def retrieve_source(
             ref_id=source.ref_id, document_id="", raw_entry="",
             title=source.matched_title, authors=source.matched_authors, year=source.matched_year,
         )
-        scholar = match_provider_work(ref, source.canonical_doi, await semantic_scholar_works(ref, source.canonical_doi, client), "scholar")
+        scholar = match_provider_work(ref, source.canonical_doi, await semantic_scholar_works(ref, source.canonical_doi, client), "scholar", verified_doi=True)
         if scholar:
             abstract = abstract or scholar.get("abstract")
             publication_url = publication_url or scholar.get("url")

@@ -46,7 +46,7 @@ UNPAYWALL_EMAIL: str = os.getenv("UNPAYWALL_EMAIL", "")
 # ---------------------------------------------------------------------------
 
 EMBEDDING_MODEL: str = os.getenv(
-    "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+    "EMBEDDING_MODEL", ""
 )
 
 # ---------------------------------------------------------------------------

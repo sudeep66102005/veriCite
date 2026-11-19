@@ -102,3 +102,25 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[3]["marker"], "[9]")
         self.assertIsNone(rows[3]["reference"])
         self.assertIn("Missing citation", rows[4]["review_reason"])
+
+    def test_confirmed_doi_accepts_provider_author_variants(self):
+        from app.resolution import match_provider_work
+        ref = Reference(document_id="d", ref_id="r", raw_entry="", title="A study", authors=["Team"])
+        candidate = {"title": "A study", "doi": "10.1234/a", "authorships": [{"author": {"display_name": "Individual"}}]}
+        self.assertFalse(match_provider_work(ref, "10.1234/a", [candidate], "openalex"))
+        self.assertTrue(match_provider_work(ref, "10.1234/a", [candidate], "openalex", verified_doi=True))
+        self.assertFalse(match_provider_work(ref, "10.1234/b", [candidate], "openalex", verified_doi=True))
+
+    def test_real_source_pdf_page_trace(self):
+        import pymupdf
+        from app.retrieval import _parse_pdf
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evidence.pdf"
+            with pymupdf.open() as doc:
+                doc.new_page()
+                page = doc.new_page()
+                page.insert_text((36, 60), "Results")
+                page.insert_text((36, 120), "Students improved their scores in both cohorts.")
+                doc.save(path)
+            [passage] = _parse_pdf(path)
+            self.assertEqual(passage, ("Students improved their scores in both cohorts.", "Results", 2, None))

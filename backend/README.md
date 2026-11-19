@@ -102,3 +102,21 @@ To retrieve the full work record, call
 `GET /api/evidence/core/works/{work_id}` with the `core_id` returned by search.
 For example, `GET /api/evidence/core/works/267312` returns the CORE record,
 including any full text, references, and repository metadata supplied by CORE.
+
+### Citation verification providers
+
+The verification job uses Crossref to validate DOIs and resolve bibliography entries.
+OpenAlex can resolve a citation by title and provides open-access PDF locations and
+abstracts. Semantic Scholar can resolve a citation when the earlier providers
+cannot and supplies PDF links or abstracts for matching papers. When a PDF cannot
+be read from the initial locations, the retriever can try Unpaywall and then
+fall back to abstract evidence or mark the source unavailable.
+
+Configure provider settings on the FastAPI server:
+
+| Setting | Used for |
+| --- | --- |
+| `CROSSREF_MAILTO` | Optional Crossref contact email |
+| `OPENALEX_API_KEY` | Authenticated OpenAlex requests |
+| `SEMANTIC_SCHOLAR_API_KEY` | Optional authenticated Semantic Scholar requests |
+| `UNPAYWALL_EMAIL` | Enables Unpaywall lookups for resolved DOIs |

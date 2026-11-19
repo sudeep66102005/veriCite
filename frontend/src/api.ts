@@ -34,6 +34,7 @@ export interface VerificationRow {
   marker: string | null;
   reference: string | null;
   doi: string | null;
+  source_url?: string | null;
   mapping: 'mapped' | 'ambiguous' | 'unmatched' | null;
   assessment: {
     assessment_status: 'assessed' | 'unable_to_assess' | 'failed';

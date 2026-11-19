@@ -127,6 +127,9 @@ class ResolvedSource(BaseModel):
     matched_year: int | None = None
     identity_status: IdentityStatus
     source_url: str | None = None
+    publication_url: str | None = None
+    pdf_urls: list[str] = Field(default_factory=list)
+    abstract_text: str | None = None
     coverage: CoverageStatus
     is_retracted: bool = False
     retraction_note: str | None = None

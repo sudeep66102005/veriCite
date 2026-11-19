@@ -146,6 +146,7 @@ async def verify_claims(job_id: str):
                 "marker": link.citation_marker if link else None,
                 "reference": ref.raw_entry if ref else None,
                 "doi": (source.canonical_doi if source else None) or (ref.doi if ref else None),
+                "source_url": (source.publication_url or source.source_url) if source else None,
                 "mapping": link.mapping_status if link else None,
                 "assessment": assessment,
                 "evidence": evidence,

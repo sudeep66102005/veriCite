@@ -87,7 +87,7 @@ function toClaim(row: VerificationRow): Claim {
     reason: row.extraction_error ? `Original cited text retained for review. ${row.extraction_error}` : row.mapping === 'ambiguous' ? 'The citation mapping requires human review.' :
       assessment?.explanation || 'The service could not assess this claim against a cited source.',
     flags: [...(row.extraction_error ? ['Extraction incomplete'] : []), ...(assessment?.issue_flags || []), ...(row.mapping && row.mapping !== 'mapped' ? [`Citation mapping: ${row.mapping}`] : [])],
-    source: row.doi ? `https://doi.org/${encodeURI(row.doi)}` : null,
+    source: row.doi ? `https://doi.org/${encodeURI(row.doi)}` : /^https?:\/\//i.test(row.source_url ?? '') ? row.source_url ?? null : null,
   };
 }
 

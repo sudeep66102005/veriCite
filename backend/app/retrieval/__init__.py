@@ -18,10 +18,10 @@ import httpx
 import numpy as np
 
 from app.config import (
-    EMBEDDING_MODEL, MAX_DOWNLOAD_SIZE_MB, OPENALEX_API_KEY,
-    OPENALEX_EMAIL, PROVIDER_TIMEOUT, SEMANTIC_SCHOLAR_API_KEY,
+    EMBEDDING_MODEL, MAX_DOWNLOAD_SIZE_MB, PROVIDER_TIMEOUT,
 )
-from app.models import CoverageStatus, DocumentBlock, Passage, ResolvedSource
+from app.models import CoverageStatus, DocumentBlock, IdentityStatus, Passage, Reference, ResolvedSource
+from app.resolution import match_provider_work, semantic_scholar_works, unpaywall_pdf_urls
 
 # ---------------------------------------------------------------------------
 # Module-level embedding model cache
@@ -88,81 +88,6 @@ def _chunk_abstract(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # Abstract fetchers (fallback when no PDF)
 # ---------------------------------------------------------------------------
-
-async def _fetch_abstract_openalex(
-    openalex_id: str | None, canonical_doi: str | None, client: httpx.AsyncClient
-) -> str | None:
-    work_id = openalex_id.rsplit("/", 1)[-1] if openalex_id else ""
-    if re.fullmatch(r"W[0-9]+", work_id):
-        url = f"https://api.openalex.org/works/{work_id}"
-    elif canonical_doi:
-        url = f"https://api.openalex.org/works/doi:{canonical_doi}"
-    else:
-        return None
-    params = {}
-    if OPENALEX_API_KEY:
-        params["api_key"] = OPENALEX_API_KEY
-    if OPENALEX_EMAIL:
-        params["mailto"] = OPENALEX_EMAIL
-    try:
-        resp = await client.get(url, params=params, timeout=PROVIDER_TIMEOUT)
-        if resp.status_code == 200:
-            data = resp.json()
-            # OpenAlex stores abstract as inverted index
-            inv = data.get("abstract_inverted_index")
-            if inv:
-                # Reconstruct
-                word_pos: list[tuple[int, str]] = []
-                for word, positions in inv.items():
-                    for pos in positions:
-                        word_pos.append((pos, word))
-                word_pos.sort()
-                return " ".join(w for _, w in word_pos)
-    except (httpx.TimeoutException, httpx.ConnectError, Exception):
-        pass
-    return None
-
-
-async def _fetch_abstract_s2(
-    canonical_doi: str | None,
-    matched_title: str | None,
-    client: httpx.AsyncClient,
-) -> str | None:
-    if canonical_doi:
-        query = canonical_doi
-        url = f"https://api.semanticscholar.org/graph/v1/paper/DOI:{canonical_doi}"
-        params: dict = {"fields": "abstract"}
-    elif matched_title:
-        url = "https://api.semanticscholar.org/graph/v1/paper/search"
-        params = {"query": matched_title, "fields": "abstract", "limit": 1}
-    else:
-        return None
-
-    headers: dict = {}
-    if SEMANTIC_SCHOLAR_API_KEY:
-        headers["x-api-key"] = SEMANTIC_SCHOLAR_API_KEY
-
-    try:
-        resp = await client.get(url, params=params, headers=headers, timeout=PROVIDER_TIMEOUT)
-        if resp.status_code == 200:
-            data = resp.json()
-            # Search returns .data list
-            if "data" in data:
-                items = data["data"]
-                if items:
-                    return items[0].get("abstract")
-            return data.get("abstract")
-    except (httpx.TimeoutException, httpx.ConnectError, Exception):
-        pass
-    return None
-
-
-async def _get_abstract(source: ResolvedSource, client: httpx.AsyncClient) -> str | None:
-    abstract = await _fetch_abstract_openalex(source.openalex_id, source.canonical_doi, client)
-    if abstract:
-        return abstract
-    return await _fetch_abstract_s2(source.canonical_doi, source.matched_title, client)
-
 
 # ---------------------------------------------------------------------------
 # Download
@@ -384,61 +309,59 @@ async def retrieve_source(
 ) -> tuple[ResolvedSource, list[Passage]]:
     """Download, parse, embed, and rank passages for a single ResolvedSource."""
 
-    coverage = CoverageStatus.unavailable
-    passages: list[Passage] = []
-    tmp_path: Path | None = None
+    if source.identity_status != IdentityStatus.matched:
+        return source, []
 
-    # ------------------------------------------------------------------
-    # Step 1 – Download (or get abstract if no URL)
-    # ------------------------------------------------------------------
-    abstract_text: str | None = None
-    have_pdf = False
-
-    if source.source_url is None:
-        abstract_text = await _get_abstract(source, client)
-        coverage = CoverageStatus.abstract_only if abstract_text else CoverageStatus.unavailable
-    else:
-        tmp_path, dl_status = await _download_pdf(source.source_url, client)
-        if dl_status == "ok" and tmp_path is not None:
-            have_pdf = True
-        else:
-            # Fallback: try abstract
-            if dl_status in ("login", "type", "timeout", "size", "error"):
-                abstract_text = await _get_abstract(source, client)
-            coverage = CoverageStatus.abstract_only if abstract_text else CoverageStatus.unavailable
-
-    # ------------------------------------------------------------------
-    # Step 2 – Parse
-    # ------------------------------------------------------------------
     raw_chunks: list[tuple[str, str | None, int | None, str | None]] = []
+    passages: list[Passage] = []
+    coverage = CoverageStatus.unavailable
+    abstract = source.abstract_text
+    selected_url = None
+    publication_url = source.publication_url
 
-    if have_pdf and tmp_path is not None:
-        try:
-            raw_chunks = await asyncio.to_thread(_parse_pdf, tmp_path)
+    attempted: set[str] = set()
+
+    async def try_pdfs(urls: list[str]) -> None:
+        nonlocal raw_chunks, selected_url, coverage
+        for url in urls:
             if raw_chunks:
+                return
+            if url in attempted or len(attempted) >= 6:
+                continue
+            attempted.add(url)
+            path, _ = await _download_pdf(url, client)
+            if path is None:
+                continue
+            try:
+                raw_chunks = await asyncio.to_thread(_parse_pdf, path)
+            except Exception:
+                continue
+            finally:
+                path.unlink(missing_ok=True)
+            if raw_chunks:
+                selected_url = url
                 coverage = CoverageStatus.full_text
-            else:
-                # Docling returned nothing — fall back to abstract
-                abstract_text = await _get_abstract(source, client)
-                coverage = CoverageStatus.abstract_only if abstract_text else CoverageStatus.unavailable
-        except Exception:
-            abstract_text = await _get_abstract(source, client)
-            coverage = CoverageStatus.abstract_only if abstract_text else CoverageStatus.unavailable
-        finally:
-            if tmp_path and tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except Exception:
-                    pass
 
-    if not raw_chunks and abstract_text:
-        for sentence in _chunk_abstract(abstract_text):
-            raw_chunks.append((sentence, None, None, None))
-        coverage = CoverageStatus.abstract_only
+    await try_pdfs((source.pdf_urls or ([source.source_url] if source.source_url else []))[:3])
+    if not raw_chunks and source.canonical_doi:
+        await try_pdfs((await unpaywall_pdf_urls(source.canonical_doi, client))[:2])
+    if not raw_chunks and not source.s2_id:
+        ref = Reference(
+            ref_id=source.ref_id, document_id="", raw_entry="",
+            title=source.matched_title, authors=source.matched_authors, year=source.matched_year,
+        )
+        scholar = match_provider_work(ref, source.canonical_doi, await semantic_scholar_works(ref, source.canonical_doi, client), "scholar")
+        if scholar:
+            abstract = abstract or scholar.get("abstract")
+            publication_url = publication_url or scholar.get("url")
+            pdf = (scholar.get("openAccessPdf") or {}).get("url")
+            if pdf:
+                await try_pdfs([pdf])
 
-    if not raw_chunks:
-        updated = source.model_copy(update={"coverage": CoverageStatus.unavailable})
-        return updated, []
+    if not raw_chunks and abstract:
+        raw_chunks = [(sentence, "Abstract", None, None) for sentence in _chunk_abstract(abstract)]
+        if raw_chunks:
+            coverage = CoverageStatus.abstract_only
 
     # ------------------------------------------------------------------
     # Step 3 – Create Passage objects
@@ -468,7 +391,9 @@ async def retrieve_source(
             # If embedding fails (model not downloaded, etc.) return unranked first 10
             passages = passages[:10]
 
-    updated = source.model_copy(update={"coverage": coverage})
+    updated = source.model_copy(update={
+        "coverage": coverage, "source_url": selected_url, "publication_url": publication_url,
+    })
     return updated, passages
 
 

@@ -1,8 +1,12 @@
 """veriCite academic research discovery and verification API."""
 import asyncio
 import os
+import hashlib
+import secrets
+from app.database import save_job
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi import FastAPI, HTTPException, Path, Query, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -10,8 +14,9 @@ import httpx
 from integrations.providers import SEARCH_PROVIDERS, TIMEOUT, core_work, search_all, unpaywall
 from app.config import GEMINI_API_KEY
 from app.pipeline import create_job, run_pipeline
-from app.database import init_db, get_job, get_claims, get_links, get_references, get_resolved_source, get_passages
+from app.database import init_db, get_job, get_claims, document_links, get_references, get_resolved_source, get_passages
 from app.models import JobState
+from app.database import reserve_verification, finish_verification
 
 load_dotenv()
 @asynccontextmanager
@@ -80,25 +85,56 @@ def liveness() -> dict[str, str]:
 
 class VerifyRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2_000_000)
-    filename: str = "document.txt"
+    filename: str = Field("document.txt", max_length=255)
 
 
 @app.post("/api/verify", status_code=202)
-async def verify(request: VerifyRequest):
+async def verify(request: VerifyRequest, connection: Request, x_verification_key: str = Header("")):
+    configured = os.getenv("VERIFICATION_ACCESS_KEY", "")
+    if configured and not secrets.compare_digest(configured.encode(), x_verification_key.encode()):
+        raise HTTPException(401, "This workspace requires a verification access code.")
     if not GEMINI_API_KEY.strip():
         raise HTTPException(status_code=503, detail="Verification is unavailable until GEMINI_API_KEY is configured on Render.")
     filename = request.filename if request.filename.lower().endswith((".txt", ".md")) else "document.txt"
     content = request.text.encode("utf-8")
-    job = create_job(filename, "text/plain")
-    asyncio.create_task(run_pipeline(job.job_id, content, filename, "text/plain"))
-    return {"job_id": job.job_id, "status": "queued"}
+    token = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    peer = connection.client.host if connection.client else "unknown"
+    if not reserve_verification(digest, peer, int(time.time())):
+        raise HTTPException(429, "Verification capacity reached. Try again later.", headers={"Retry-After": "60"})
+    try:
+        job = create_job(filename, "text/plain", digest)
+    except Exception:
+        finish_verification(digest)
+        raise
+
+    async def run():
+        try:
+            async with asyncio.timeout(540):
+                await run_pipeline(job.job_id, content, filename, "text/plain")
+        except TimeoutError:
+            current = get_job(job.job_id)
+            current.job_state = JobState.failed
+            current.error_message = "Verification reached its time limit."
+            save_job(current)
+        finally:
+            finish_verification(digest)
+    asyncio.create_task(run())
+    return {"job_id": job.job_id, "status": "queued", "access_token": token}
+
+
+def check_job(job_id, authorization):
+    job = get_job(job_id)
+    token = authorization.removeprefix("Bearer ") if isinstance(authorization, str) else ""
+    if job is None or (job.access_digest and not secrets.compare_digest(
+            job.access_digest, hashlib.sha256(token.encode()).hexdigest())):
+        raise HTTPException(404, "Job not found")
+    return job
 
 
 @app.get("/api/verify/{job_id}")
-async def verify_status(job_id: str):
-    job = get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+async def verify_status(job_id: str, authorization: str | None = Header(None)):
+    job = check_job(job_id, authorization)
     result = {
         "job_id": job.job_id,
         "job_state": job.job_state.value,
@@ -111,10 +147,8 @@ async def verify_status(job_id: str):
 
 
 @app.get("/api/verify/{job_id}/claims")
-async def verify_claims(job_id: str):
-    job = get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+async def verify_claims(job_id: str, authorization: str | None = Header(None)):
+    job = check_job(job_id, authorization)
     if not job.report or not job.report.get("document_id"):
         return {"claims": []}
     document_id = job.report["document_id"]
@@ -127,10 +161,12 @@ async def verify_claims(job_id: str):
         for source in sources.values() if source
         for passage in get_passages(source.source_id)
     }
+    links_by_claim = document_links(document_id)
     rows = []
     for claim in claims:
-        links = get_links(claim.claim_id)
-        for link in links or [None]:
+        links = links_by_claim.get(claim.claim_id, [])
+        pairs = [(link, None) for link in links] + [(None, marker) for marker in claim.unmatched_markers]
+        for link, unresolved in pairs or [(None, None)]:
             ref = references.get(link.ref_id) if link else None
             source = sources.get(ref.ref_id) if ref else None
             assessment = assessments.get((claim.claim_id, ref.ref_id)) if ref else None
@@ -140,14 +176,16 @@ async def verify_claims(job_id: str):
                 if pid in passages and source and passages[pid].source_id == source.source_id
             ]
             rows.append({
-                "id": link.link_id if link else claim.claim_id,
-                "text": claim.normalized_text,
+                "id": link.link_id if link else f"{claim.claim_id}:{unresolved or 'uncited'}",
+                "text": claim.original_span,
+                "review_reason": f"Reference {unresolved} is missing." if unresolved else claim.mapping_issue,
+                "coverage": source.coverage.value if source else "unavailable",
                 "extraction_error": claim.extraction_error,
-                "marker": link.citation_marker if link else None,
+                "marker": link.citation_marker if link else unresolved,
                 "reference": ref.raw_entry if ref else None,
                 "doi": (source.canonical_doi if source else None) or (ref.doi if ref else None),
                 "source_url": (source.publication_url or source.source_url) if source else None,
-                "mapping": link.mapping_status if link else None,
+                "mapping": link.mapping_status if link else "unmatched",
                 "assessment": assessment,
                 "evidence": evidence,
             })
@@ -155,10 +193,8 @@ async def verify_claims(job_id: str):
 
 
 @app.get("/api/verify/{job_id}/report")
-async def verify_report(job_id: str):
-    job = get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+async def verify_report(job_id: str, authorization: str | None = Header(None)):
+    job = check_job(job_id, authorization)
     if job.job_state != JobState.completed:
         raise HTTPException(status_code=409, detail="Job has not completed yet")
-    return job.report
+    return {**job.report, "rows": (await verify_claims(job_id, authorization)).get("rows", [])}

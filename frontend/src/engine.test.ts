@@ -101,12 +101,13 @@ test('verification submits manuscript text and only displays verdicts with trace
   if (path === '/api/verify') {
    assert.equal(request?.method, 'POST');
    assert.equal(JSON.parse(String(request.body)).text, manuscript);
-   return Response.json({ job_id: 'job-1' }, { status: 202 });
+   return Response.json({ job_id: 'job-1', access_token: 'job-secret' }, { status: 202 });
   }
+  assert.equal(new Headers(request?.headers).get('Authorization'), 'Bearer job-secret');
   if (path === '/api/verify/job-1') return Response.json({ job_state: 'completed', report: { stage_errors: [] } });
   assert.equal(path, '/api/verify/job-1/claims');
   return Response.json({ rows: [
-   { ...base, evidence: [{ verbatim_text: manuscript, page: 2, section: 'Results' }] },
+   { ...base, coverage: 'full_text', evidence: [{ verbatim_text: manuscript, page: 2, section: 'Results' }] },
    { ...base, id: 'link-2', evidence: [] },
   ] });
  });
@@ -115,6 +116,7 @@ test('verification submits manuscript text and only displays verdicts with trace
  );
  assert.equal(fetch.mock.calls.length, 3);
  assert.deepEqual(workspace.claims.map(row => row.status), ['Supported', 'Unverified']);
+ assert.deepEqual(workspace.claims.map(r => r.confidence), ['High', 'Low']);
  assert.equal(workspace.claims[0].section, 'Results · Page 2');
  assert.equal(workspace.claims[0].source, 'https://doi.org/10.1234/study');
  assert.deepEqual(decodeWorkspace(JSON.stringify(workspace)), workspace);

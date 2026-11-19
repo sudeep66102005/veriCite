@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import html
 import re
 import uuid
 from urllib.parse import quote
@@ -57,13 +58,18 @@ def _extract_surnames(names: list[str]) -> set[str]:
 def _parse_crossref_work(item: dict) -> tuple[str | None, list[str], int | None, str | None]:
     """Return (title, authors, year, doi) from a Crossref work item."""
     titles = item.get("title") or []
-    title: str | None = titles[0] if titles else None
+    title = None
+    if titles:
+        components = [titles[0], *(item.get("subtitle") or [])]
+        title = " ".join(html.unescape(re.sub(r"<[^>]+>", "", part)).strip() for part in components)
     raw_authors = item.get("author") or []
     authors: list[str] = []
     for a in raw_authors:
         family = a.get("family", "")
         given = a.get("given", "")
-        if family:
+        if a.get("name"):
+            authors.append(a["name"])
+        elif family:
             authors.append(f"{family}, {given}".strip(", "))
     year: int | None = None
     dp = (item.get("published") or {}).get("date-parts")
@@ -101,6 +107,8 @@ async def _crossref_doi_lookup(
         return IdentityStatus.lookup_failed, None, None, [], None, None
 
     data = payload.get("message") or {}
+    if not isinstance(data, dict) or not data.get("DOI"):
+        return IdentityStatus.lookup_failed, None, None, [], None, None
     title, authors, year, canonical_doi = _parse_crossref_work(data)
     return IdentityStatus.matched, None, title, authors, year, canonical_doi or doi
 
@@ -262,6 +270,23 @@ async def resolve_reference(ref: Reference, client: httpx.AsyncClient) -> Resolv
             status = IdentityStatus.matched
             doi = metadata[3]
         source.openalex_id = openalex.get("id")
+        work_id = (source.openalex_id or "").rsplit("/", 1)[-1]
+        year = openalex.get("publication_year")
+        if re.fullmatch(r"W[0-9]+", work_id) and isinstance(year, int):
+            params = {"filter": f"cites:{work_id},from_publication_date:{year + 1}-01-01,has_abstract:true",
+                      "sort": "publication_date:desc", "per-page": 3}
+            if OPENALEX_API_KEY:
+                params["api_key"] = OPENALEX_API_KEY
+            later = await _provider_json(client, "https://api.openalex.org/works", params)
+            for item in later.get("results") or []:
+                abstract = openalex_abstract(item.get("abstract_inverted_index"))
+                url = item.get("doi") or item.get("id") or ""
+                if (abstract and url.startswith("https://") and not item.get("is_retracted")
+                        and (item.get("publication_year") or 0) > year
+                        and source.openalex_id in (item.get("referenced_works") or [])):
+                    source.newer_works.append({"title": item.get("display_name") or url,
+                                               "url": url, "year": str(item["publication_year"]),
+                                               "text": abstract[:3000]})
         source.is_retracted = bool(openalex.get("is_retracted"))
         if source.is_retracted:
             source.retraction_note = "Flagged as retracted by OpenAlex"

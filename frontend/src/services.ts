@@ -22,7 +22,7 @@ export const textSteps: PipelineStep[] = [
   { title: 'Read document text', detail: 'Process the text locally in your browser.' },
   { title: 'Extract claims and map citations', detail: 'Identify candidate claims and match simple bibliography entries.' },
 ];
-type DocumentInput = { kind: 'pdf' | 'text'; title: string; text: string; file: File | null };
+type DocumentInput = { accessCode?: string; kind: 'pdf' | 'text'; title: string; text: string; file: File | null };
 
 async function prepareDocument(input: DocumentInput, onStep: (step: number) => void, signal: AbortSignal) {
   const file = input.kind === 'pdf' ? input.file : null;
@@ -65,6 +65,7 @@ export const pdfVerificationSteps = [...pdfSteps.slice(0, 2), ...verificationSte
 export const textVerificationSteps = [...textSteps.slice(0, 1), ...verificationSteps];
 
 const semanticVerdicts = {
+  POSSIBLY_OUTDATED: 'Possibly outdated',
   SUPPORTED: 'Supported',
   PARTLY_SUPPORTED: 'Partly supported',
   UNSUPPORTED: 'Unsupported',
@@ -81,12 +82,15 @@ function toClaim(row: VerificationRow): Claim {
     markers: row.marker ? [row.marker] : [],
     references: row.reference ? [row.reference] : [],
     status: verdict,
-    confidence: null,
+    confidence: verdict === 'Unverified' ? 'Low' : row.coverage === 'full_text' && !assessment?.issue_flags.length ? 'High' : 'Medium',
+    confidenceBasis: verdict === 'Unverified' ? 'Insufficient verified evidence or unresolved citation.' :
+      assessment?.confidence_basis || 'Strength reflects available source coverage.',
+    ...(assessment?.update_evidence ? { updateEvidence: assessment.update_evidence } : {}),
     evidence: evidence.map(p => p.verbatim_text).join('\n\n') || 'No source passage is available for this assessment.',
     section: evidence.map(p => [p.section, p.page !== null ? `Page ${p.page}` : null].filter(Boolean).join(' · ')).filter(Boolean).join(', ') || 'Not available',
-    reason: row.extraction_error ? `Original cited text retained for review. ${row.extraction_error}` : row.mapping === 'ambiguous' ? 'The citation mapping requires human review.' :
-      assessment?.explanation || 'The service could not assess this claim against a cited source.',
-    flags: [...(row.extraction_error ? ['Extraction incomplete'] : []), ...(assessment?.issue_flags || []), ...(row.mapping && row.mapping !== 'mapped' ? [`Citation mapping: ${row.mapping}`] : [])],
+    reason: row.review_reason || (row.extraction_error ? `Original cited text retained for review. ${row.extraction_error}` : row.mapping === 'ambiguous' ? 'The citation mapping requires human review.' :
+      assessment?.explanation || 'The service could not assess this claim against a cited source.'),
+    flags: [...(verdict === 'Unverified' || verdict === 'Possibly outdated' ? ['Needs human review'] : []), ...(row.extraction_error ? ['Extraction incomplete'] : []), ...(assessment?.issue_flags || []), ...(row.mapping && row.mapping !== 'mapped' ? [`Citation mapping: ${row.mapping}`] : [])],
     source: row.doi ? `https://doi.org/${encodeURI(row.doi)}` : /^https?:\/\//i.test(row.source_url ?? '') ? row.source_url ?? null : null,
   };
 }
@@ -98,7 +102,7 @@ export async function runVerification(input: DocumentInput, onStep: (step: numbe
   // Keep bibliography headings visible to the server's paragraph parser.
   const manuscript = text.replace(/^([ \t]*(?:References|Bibliography)[ \t]*:?[ \t]*)$/gim, '\n\n$1\n\n');
   onStep(offset);
-  const { job_id } = await submitDocument(manuscript, `${title}.txt`, signal);
+  const { job_id } = await submitDocument(manuscript, `${title}.txt`, signal, input.accessCode);
   let job = await getJobStatus(job_id, signal);
   while (job.job_state === 'queued' || job.job_state === 'running') {
     onStep(offset + (job.current_stage ?? 0));
@@ -106,7 +110,7 @@ export async function runVerification(input: DocumentInput, onStep: (step: numbe
     signal.throwIfAborted();
     job = await getJobStatus(job_id, signal);
   }
-  if (job.job_state !== 'completed') throw new Error('The verification job failed on the server. Try again or check the backend logs.');
+  if (job.job_state !== 'completed') throw new Error(job.error_message || 'The verification job failed on the server.');
   const { rows } = await getJobClaims(job_id, signal);
   if (!Array.isArray(rows)) throw new Error('The verification server needs the latest backend deployment.');
   const issues = job.report?.stage_errors.length ?? 0;
@@ -124,7 +128,7 @@ export async function runVerification(input: DocumentInput, onStep: (step: numbe
 
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === 'string');
-const claim = (v: unknown): v is Claim => object(v) && typeof v.id === 'string' && typeof v.claim === 'string' && strings(v.markers) && strings(v.references) && verdicts.includes(v.status as Claim['status']) && [null,'High','Medium','Low'].includes(v.confidence as string|null) && typeof v.evidence === 'string' && typeof v.section === 'string' && typeof v.reason === 'string' && strings(v.flags) && (v.source === null || typeof v.source === 'string');
+const claim = (v: unknown): v is Claim => object(v) && typeof v.id === 'string' && typeof v.claim === 'string' && strings(v.markers) && strings(v.references) && verdicts.includes(v.status as Claim['status']) && [null,'High','Medium','Low'].includes(v.confidence as string|null) && typeof v.evidence === 'string' && typeof v.section === 'string' && typeof v.reason === 'string' && strings(v.flags) && (v.confidenceBasis === undefined || typeof v.confidenceBasis === 'string') && (v.updateEvidence === undefined || (object(v.updateEvidence) && ['url','title','quote','year'].every(k => typeof (v.updateEvidence as Record<string,unknown>)[k] === 'string'))) && (v.source === null || typeof v.source === 'string');
 const review = (v: unknown): v is Review => object(v) && typeof v.claimId === 'string' && ['Reviewed','Needs follow-up'].includes(v.decision as string) && typeof v.note === 'string' && typeof v.at === 'string';
 const metadata = (v: unknown): v is FileMetadata => object(v) && typeof v.name === 'string' && typeof v.size === 'number' && typeof v.type === 'string';
 const attachment = (v: unknown): v is SourceAttachment => metadata(v) && object(v) && typeof v.id === 'string' && typeof v.claimId === 'string' && typeof v.addedAt === 'string';

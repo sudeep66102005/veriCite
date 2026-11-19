@@ -57,7 +57,7 @@ from app.config import PROVIDER_TIMEOUT
 # ---------------------------------------------------------------------------
 
 
-def create_job(filename: str | None, content_type: str | None) -> VerificationJob:
+def create_job(filename: str | None, content_type: str | None, access_digest: str | None = None) -> VerificationJob:
     """Create and persist a new VerificationJob in the *queued* state.
 
     Args:
@@ -68,7 +68,8 @@ def create_job(filename: str | None, content_type: str | None) -> VerificationJo
         The newly-created VerificationJob (already saved to the database).
     """
     job = VerificationJob(
-        job_id=f"job_{uuid.uuid4().hex[:16]}",
+        access_digest=access_digest,
+        job_id=f"job_{uuid.uuid4().hex}",
         input_filename=filename,
         input_format=content_type,
         job_state=JobState.queued,
@@ -161,6 +162,9 @@ async def run_pipeline(
             stage_errors.extend([f"Stage 2: {i}" for i in issues])
             save_claims(claims)
             save_links(links)
+        except ValueError as e:
+            update_job(2, JobState.failed, str(e))
+            return
         except Exception as e:
             stage_errors.append(f"Stage 2 error: {e}")
 
@@ -171,7 +175,15 @@ async def run_pipeline(
         resolved_sources: list[ResolvedSource] = []
         claims_by_id = {claim.claim_id: claim for claim in claims}
         assessable_ids = {claim.claim_id for claim in claims if not claim.extraction_error}
-        linked_ref_ids = {link.ref_id for link in links if link.claim_id in assessable_ids}
+        eligible = [link for link in links if link.claim_id in assessable_ids and link.mapping_status.value == "mapped"]
+        limit = 40
+        if len(eligible) > limit:
+            stage_errors.append(f"Assessment budget reached. Remaining {len(eligible) - limit} pairs require human review.")
+            for link in eligible[limit:]:
+                claims_by_id[link.claim_id].mapping_issue = "Verification budget reached. Human review required."
+            save_claims(claims)
+        scheduled = eligible[:limit]
+        linked_ref_ids = {link.ref_id for link in scheduled}
         linked_refs = [ref for ref in refs if ref.ref_id in linked_ref_ids]
         try:
             if linked_refs:
@@ -250,7 +262,7 @@ async def run_pipeline(
                     stage_errors.append(f"Stage 5 error for claim {link.claim_id} × ref {link.ref_id}: {exc}")
                     return None
 
-            assessed = await asyncio.gather(*(assess_link(link) for link in links))
+            assessed = await asyncio.gather(*(assess_link(link) for link in scheduled))
             all_assessments = [assessment for assessment in assessed if assessment is not None]
         except Exception as e:
             stage_errors.append(f"Stage 5 error: {e}")

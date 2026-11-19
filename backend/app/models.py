@@ -52,6 +52,7 @@ class SemanticVerdict(str, enum.Enum):
     PARTLY_SUPPORTED = "PARTLY_SUPPORTED"
     CONTRADICTORY = "CONTRADICTORY"
     UNSUPPORTED = "UNSUPPORTED"
+    POSSIBLY_OUTDATED = "POSSIBLY_OUTDATED"
 
 
 class HumanReviewStatus(str, enum.Enum):
@@ -100,6 +101,8 @@ class Claim(BaseModel):
     block_id: str
     original_span: str
     normalized_text: str
+    mapping_issue: str | None = None
+    unmatched_markers: list[str] = Field(default_factory=list)
     extraction_error: str | None = None
     char_start: int | None = None
     char_end: int | None = None
@@ -134,6 +137,7 @@ class ResolvedSource(BaseModel):
     is_retracted: bool = False
     retraction_note: str | None = None
     age_flag: bool = False
+    newer_works: list[dict[str, str]] = Field(default_factory=list)
 
 
 class Passage(BaseModel):
@@ -160,10 +164,12 @@ class Assessment(BaseModel):
     human_review_status: HumanReviewStatus = HumanReviewStatus.pending
     confidence_score: float | None = None
     confidence_basis: str | None = None
+    update_evidence: dict[str, str] | None = None
 
 
 class VerificationJob(BaseModel):
     job_id: str
+    access_digest: str | None = None
     input_filename: str | None = None
     input_format: str | None = None
     job_state: JobState = JobState.queued

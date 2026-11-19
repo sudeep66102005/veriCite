@@ -10,6 +10,8 @@ export interface Claim {
   references: string[];
   status: Verdict;
   confidence: Confidence;
+  confidenceBasis?: string;
+  updateEvidence?: { url: string; title: string; year: string; quote: string };
   evidence: string;
   section: string;
   reason: string;

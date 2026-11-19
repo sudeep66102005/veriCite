@@ -46,7 +46,8 @@ def build_report(
     unique_refs: set[str] = {link.ref_id for link in links if link.claim_id in unique_claims}
 
     # 2. Build issues list ----------------------------------------------------
-    issues: list[str] = []
+    issues = [f"{claim.claim_id}: {claim.mapping_issue}" for claim in claims if claim.mapping_issue]
+    issues.extend(f"{claim.claim_id}: Missing reference {marker}." for claim in claims for marker in claim.unmatched_markers)
 
     # 2a. Issue flags per assessment
     for assessment in assessments:
@@ -111,6 +112,7 @@ def summarize_verdicts(assessments: list[Assessment]) -> dict:
         "PARTLY_SUPPORTED": 0,
         "CONTRADICTORY": 0,
         "UNSUPPORTED": 0,
+        "POSSIBLY_OUTDATED": 0,
         "unable_to_assess": 0,
         "failed": 0,
     }

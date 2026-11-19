@@ -18,19 +18,28 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export function checkHealth() {
   return request<{ status: string; providers: string[] }>('/api/health');
 }
-export function submitDocument(text: string, filename = 'document.txt', signal?: AbortSignal) {
-  return request<{ job_id: string; status: string }>('/api/verify', {
-    signal, method: 'POST', headers: { 'Content-Type': 'application/json' },
+const jobTokens = new Map<string, string>();
+function jobHeaders(id: string) {
+  const token = jobTokens.get(id);
+  return token ? { Authorization: `Bearer ${token}` } : undefined;
+}
+export async function submitDocument(text: string, filename = 'document.txt', signal?: AbortSignal, accessCode?: string) {
+  const job = await request<{ job_id: string; status: string; access_token?: string }>('/api/verify', {
+    signal, method: 'POST', headers: { 'Content-Type': 'application/json', ...(accessCode ? { 'X-Verification-Key': accessCode } : {}) },
     body: JSON.stringify({ text, filename }),
   });
+  if (job.access_token) jobTokens.set(job.job_id, job.access_token);
+  return job;
 }
 export function getJobStatus(jobId: string, signal?: AbortSignal) {
-  return request<VerificationStatus>(`/api/verify/${encodeURIComponent(jobId)}`, { signal });
+  return request<VerificationStatus>(`/api/verify/${encodeURIComponent(jobId)}`, { signal, headers: jobHeaders(jobId) });
 }
 export interface VerificationRow {
   extraction_error?: string | null;
   id: string;
   text: string;
+  review_reason?: string | null;
+  coverage?: string;
   marker: string | null;
   reference: string | null;
   doi: string | null;
@@ -38,17 +47,19 @@ export interface VerificationRow {
   mapping: 'mapped' | 'ambiguous' | 'unmatched' | null;
   assessment: {
     assessment_status: 'assessed' | 'unable_to_assess' | 'failed';
-    semantic_verdict: 'SUPPORTED' | 'PARTLY_SUPPORTED' | 'UNSUPPORTED' | 'CONTRADICTORY' | null;
+    semantic_verdict: 'SUPPORTED' | 'PARTLY_SUPPORTED' | 'UNSUPPORTED' | 'CONTRADICTORY' | 'POSSIBLY_OUTDATED' | null;
     explanation: string;
+    confidence_basis?: string;
+    update_evidence?: { title: string; year: string; url: string; quote: string } | null;
     issue_flags: string[];
   } | null;
   evidence: { verbatim_text: string; section: string | null; page: number | null }[];
 }
 export function getJobClaims(jobId: string, signal?: AbortSignal) {
-  return request<{ rows: VerificationRow[] }>(`/api/verify/${encodeURIComponent(jobId)}/claims`, { signal });
+  return request<{ rows: VerificationRow[] }>(`/api/verify/${encodeURIComponent(jobId)}/claims`, { signal, headers: jobHeaders(jobId) });
 }
 export function getJobReport(jobId: string) {
-  return request<unknown>(`/api/verify/${encodeURIComponent(jobId)}/report`);
+  return request<unknown>(`/api/verify/${encodeURIComponent(jobId)}/report`, { headers: jobHeaders(jobId) });
 }
 export function searchEvidence(query: string, limit = 5) {
   return request<unknown>(`/api/evidence/search?q=${encodeURIComponent(query)}&limit=${limit}`);

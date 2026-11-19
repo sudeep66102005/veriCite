@@ -12,6 +12,7 @@ import asyncio
 import re
 import uuid
 
+from app.providers import ExtractionProviderError, extract_claims_gemini
 from app.models import (
     BlockType,
     Claim,
@@ -20,8 +21,6 @@ from app.models import (
     MappingStatus,
     Reference,
 )
-from app.providers import ExtractionProviderError, extract_claims_gemini
-from app.config import MAX_RETRIES
 
 # ---------------------------------------------------------------------------
 # Regex helpers
@@ -32,7 +31,7 @@ _YEAR_RE = re.compile(r"\b(1[9][0-9]{2}|20[0-9]{2})\b")
 
 # Numeric citation: [1], [2,5], [2-5], [2–7]
 _NUMERIC_CITE_RE = re.compile(
-    r"\[(\d+(?:[,\s]*\d+)*(?:[–\-]\d+)*)\]"
+    r"\[(\d{1,6}(?:\s*[-–]\s*\d{1,6})?(?:\s*,\s*\d{1,6}(?:\s*[-–]\s*\d{1,6})?)*)\]"
 )
 
 # Author-year inline: (Smith et al., 2021; Jones, 2019) or (Smith 2021)
@@ -53,7 +52,7 @@ _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
 def _expand_range(start: int, end: int) -> list[int]:
-    return list(range(start, end + 1))
+    return list(range(start, end + 1)) if 0 <= end - start < 100 else []
 
 
 def _expand_numeric_marker(marker_text: str) -> list[int]:
@@ -67,7 +66,10 @@ def _expand_numeric_marker(marker_text: str) -> list[int]:
         part = part.strip()
         m = re.match(r"(\d+)\s*[-]\s*(\d+)$", part)
         if m:
-            nums.extend(_expand_range(int(m.group(1)), int(m.group(2))))
+            expanded = _expand_range(int(m.group(1)), int(m.group(2)))
+            if not expanded:
+                return []
+            nums.extend(expanded)
         elif part.isdigit():
             nums.append(int(part))
     return nums
@@ -190,7 +192,7 @@ def _extract_authors(entry: str, year: int | None) -> list[str]:
     raw_names = re.split(r";\s*|\band\b", author_part)
     authors: list[str] = []
     for name in raw_names:
-        name = name.strip().rstrip(",")
+        name = re.sub(r"\bet al\.?.*$", "", name).strip(" ,(.")
         if name and len(name) > 2:
             authors.append(name)
     return authors[:10]  # cap at 10
@@ -211,7 +213,7 @@ def _extract_title(entry: str, authors: list[str], year: int | None) -> str | No
     if year:
         idx = text.find(str(year))
         if idx >= 0:
-            after_year = text[idx + 4:].lstrip(".,: ")
+            after_year = text[idx + 4:].lstrip(").,: ")
             # Title ends at next period (but not initials) or at DOI
             title_candidate = re.split(r"\.\s+[A-Z]", after_year)
             if title_candidate:
@@ -236,10 +238,10 @@ def detect_citation_markers(
 
     # Build lookup indices
     # Numeric marker → ref_id
-    marker_to_ref: dict[str, str] = {}
+    marker_to_ref: dict[str, list[str]] = {}
     for ref in refs:
         if ref.raw_marker:
-            marker_to_ref[ref.raw_marker] = ref.ref_id
+            marker_to_ref.setdefault(ref.raw_marker, []).append(ref.ref_id)
 
     # 1) Numeric citations
     for m in _NUMERIC_CITE_RE.finditer(text):
@@ -249,9 +251,10 @@ def detect_citation_markers(
         for n in nums:
             key = f"[{n}]"
             if key in marker_to_ref:
-                matched_ids.append(marker_to_ref[key])
-            elif 1 <= n <= len(refs):
-                matched_ids.append(refs[n - 1].ref_id)
+                matched_ids.extend(marker_to_ref[key])
+            else:
+                matched_ids = []
+                break
         results.append((marker_text, m.start(), m.end(), matched_ids))
 
     # 2) Author-year (parenthetical)
@@ -299,8 +302,10 @@ def _resolve_author_year_inner(inner: str, refs: list[Reference]) -> list[str]:
         if not yr_m:
             continue
         year_str = yr_m.group(0)
-        surname = part.split()[0]
+        surname = part.split()[0].rstrip(",")
         ids = _resolve_surname_year(surname, year_str, refs)
+        if not ids:
+            return []
         matched.extend(ids)
     return matched
 
@@ -312,7 +317,7 @@ def _resolve_surname_year(surname: str, year_str: str, refs: list[Reference]) ->
     for ref in refs:
         if ref.year == year:
             for author in ref.authors[:1]:
-                if surname.lower() in author.lower():
+                if surname.casefold() in re.findall(r"\w+", author.casefold()):
                     matched.append(ref.ref_id)
                     break
     return matched
@@ -345,126 +350,74 @@ async def extract_claims_and_links(
     links: list[ClaimReferenceLink] = []
     issues: list[str] = []
 
-    slots = asyncio.Semaphore(4)
-    max_attempts = max(1, min(MAX_RETRIES, 2))
-
-    provider_blocker = None
-
-    async def extract_marker(block_text: str, marker: str, ref_ids: list[str], span: str):
-        nonlocal provider_blocker
-        for attempt in range(max_attempts):
-            try:
-                async with slots:
-                    if provider_blocker:
-                        return [], provider_blocker
-                    return await extract_claims_gemini(block_text, marker, ref_ids, span), None
-            except ExtractionProviderError as exc:
-                if exc.stop_job_requests:
-                    provider_blocker = str(exc)
-                if not exc.retryable or attempt + 1 == max_attempts:
-                    return [], str(exc)
-            await asyncio.sleep(2 ** attempt)
-
-    work = []
-    non_bib_blocks = [b for b in blocks if b.block_type != BlockType.bibliography]
-
-    for block in non_bib_blocks:
-        markers = detect_citation_markers(block, refs)
-        if not markers:
+    for block in blocks:
+        if block.block_type in (BlockType.bibliography, BlockType.heading):
             continue
-
-        # Collect all ref_ids for this block (across all markers)
-        all_ref_ids_for_block: list[str] = []
-        for _, _, _, mids in markers:
-            for rid in mids:
-                if rid not in all_ref_ids_for_block:
-                    all_ref_ids_for_block.append(rid)
-
-        # Unmatched markers
-        for marker_text, cs, ce, mids in markers:
-            if not mids:
-                issues.append(
-                    f"block={block.block_id}: unmatched citation marker '{marker_text}'"
-                )
-
-        # Process each marker individually (call Gemini per marker for precision)
-        for marker_index, (marker_text, cs, ce, marker_ref_ids) in enumerate(markers):
-            # Find the clause containing this marker
-            clause_text = _get_sentence_containing(block.text, cs)
-
-            # Allowed ref_ids for this marker call
-            allowed_ref_ids = marker_ref_ids if marker_ref_ids else all_ref_ids_for_block
-            if not allowed_ref_ids:
-                # No refs resolved — record issue but skip Gemini call
-                issues.append(
-                    f"block={block.block_id}: no ref_ids for marker '{marker_text}'; skipping"
-                )
+        markers = sorted(detect_citation_markers(block, refs), key=lambda item: item[1])
+        # Split at sentence boundaries, keeping author abbreviations such as "et al." intact.
+        boundaries = [m.end() for m in _SENT_SPLIT_RE.finditer(block.text)
+                      if not block.text[max(0,m.start()-8):m.start()].endswith(("et al.", "Fig.", "Dr.", "e.g."))]
+        start = 0
+        marker_index = 0
+        for end in [*boundaries, len(block.text)]:
+            sentence = block.text[start:end].strip()
+            group = []
+            while marker_index < len(markers) and markers[marker_index][1] < end:
+                group.append(markers[marker_index])
+                marker_index += 1
+            offset = start
+            start = end
+            if not sentence or (not group and len(sentence.split()) < 3):
                 continue
-
-            work.append((block, marker_index, marker_text, cs, ce, marker_ref_ids, allowed_ref_ids, clause_text))
-
-    results = await asyncio.gather(*(
-        extract_marker(block.text, marker, allowed_refs, clause)
-        for block, _, marker, _, _, _, allowed_refs, clause in work
-    ))
-    for (block, marker_index, marker_text, cs, ce, marker_ref_ids, allowed_ref_ids, clause_text), (claim_dicts, last_error) in zip(work, results):
-        if last_error is not None:
-            issues.append(
-                f"block={block.block_id} marker='{marker_text}': "
-                f"Gemini extraction failed: {last_error}"
-            )
-            claim_dicts = [{"claim_text": clause_text, "original_span": clause_text, "ref_ids": marker_ref_ids}]
-            if not marker_ref_ids:
-                continue
-
-        # Determine if the whole marker group is ambiguous
-        is_ambiguous_group = (
-            len(marker_ref_ids) > 1 or not marker_ref_ids
-        )
-
-        for claim_dict in claim_dicts:
-            # Build Claim
-            short_uuid = uuid.uuid4().hex[:8]
-            claim_id = f"{block.document_id}_c{short_uuid}"
-            claim = Claim(
-                claim_id=claim_id,
-                document_id=block.document_id,
-                block_id=block.block_id,
-                extraction_error=last_error,
-                original_span=claim_dict.get("original_span", clause_text),
-                normalized_text=claim_dict.get("claim_text", ""),
-                char_start=None,
-                char_end=None,
-            )
+            # Cited entities are assessed per sentence. Uncited statements are
+            # retained as review candidates, without guessing a bibliography entry.
+            claim = Claim(claim_id=f"{block.document_id}_c{uuid.uuid4().hex[:12]}",
+                          document_id=block.document_id, block_id=block.block_id,
+                          original_span=sentence, normalized_text=sentence,
+                          char_start=offset, char_end=end)
+            if len(claims) >= 1000:
+                raise ValueError("Manuscript exceeds the 1,000 candidate statement limit. Submit it in sections.")
             claims.append(claim)
-
-            # Build ClaimReferenceLinks
-            ref_ids_for_claim: list[str] = claim_dict.get("ref_ids", []) or allowed_ref_ids
-            group_id = (
-                f"group_{block.block_id}_{marker_index}"
-                if is_ambiguous_group or len(ref_ids_for_claim) == len(allowed_ref_ids)
-                else None
-            )
-            for rid in ref_ids_for_claim:
-                link_id = f"lnk_{uuid.uuid4().hex[:12]}"
-                links.append(
-                    ClaimReferenceLink(
-                        link_id=link_id,
-                        claim_id=claim_id,
-                        ref_id=rid,
-                        citation_marker=marker_text,
-                        marker_char_start=cs,
-                        marker_char_end=ce,
-                        citation_group_id=group_id,
-                        mapping_status=MappingStatus.mapped,
-                    )
-                )
-
+            if not group:
+                claim.mapping_issue = "Missing citation. Review this uncited statement."
+                continue
+            for marker, cs, ce, ids in group:
+                ids = list(dict.fromkeys(ids))
+                if not ids:
+                    if marker not in claim.unmatched_markers:
+                        claim.unmatched_markers.append(marker)
+                    issues.append(f"Unmatched citation {marker} in claim {claim.claim_id}.")
+                    continue
+                ambiguous = len(ids) > 1 or len(group) > 1
+                for rid in ids:
+                    links.append(ClaimReferenceLink(
+                        link_id=f"lnk_{uuid.uuid4().hex[:12]}", claim_id=claim.claim_id, ref_id=rid,
+                        citation_marker=marker, marker_char_start=cs, marker_char_end=ce,
+                        mapping_status=MappingStatus.ambiguous if ambiguous else MappingStatus.mapped,
+                    ))
+    # Split compound claims once per sentence, only after its mapping is certain.
+    by_claim = {link.claim_id: link for link in links if link.mapping_status == MappingStatus.mapped}
+    candidates = [c for c in claims if c.claim_id in by_claim and re.search(r"\b(?:and|but|whereas)\b|;", c.original_span, re.I)]
+    slots = asyncio.Semaphore(2)
+    async def split(claim):
+        link = by_claim[claim.claim_id]
+        try:
+            async with slots:
+                parts = await extract_claims_gemini(claim.original_span, link.citation_marker, [link.ref_id], claim.original_span)
+        except ExtractionProviderError as exc:
+            claim.extraction_error = str(exc)
+            return []
+        return [part for part in parts if part["original_span"] in claim.original_span
+                and part["ref_ids"] == [link.ref_id]]
+    for claim, parts in zip(candidates[:8], await asyncio.gather(*(split(c) for c in candidates[:8]))):
+        if not parts:
+            continue
+        link = by_claim[claim.claim_id]
+        for index, part in enumerate(parts[:10]):
+            atom = claim if index == 0 else claim.model_copy(update={"claim_id": f"{claim.claim_id}_{index}"})
+            atom.normalized_text = part["claim_text"]
+            atom.original_span = part["original_span"]
+            if index:
+                claims.append(atom)
+                links.append(link.model_copy(update={"claim_id": atom.claim_id, "link_id": f"{link.link_id}_{index}"}))
     return claims, links, issues
-
-
-__all__ = [
-    "parse_references",
-    "detect_citation_markers",
-    "extract_claims_and_links",
-]

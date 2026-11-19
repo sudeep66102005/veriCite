@@ -89,20 +89,33 @@ async def arxiv(client, query, limit=5):
                   "arxiv", " ".join(e.findtext("a:summary", default="", namespaces=ns).split()))
             for e in root.findall("a:entry", ns)]
 
-async def core(client, query, limit=5):
-    """Search CORE works through the backend using CORE's native query syntax."""
+async def _core_get(client, path, params=None):
     api_key = os.getenv("CORE_API_KEY", "").strip()
     if not api_key:
         raise ValueError("CORE_API_KEY must be configured")
 
     response = await client.get(
-        "https://api.core.ac.uk/v3/search/works/",
-        params={"q": query, "limit": limit},
+        f"https://api.core.ac.uk/v3/{path}",
+        params=params,
         headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
         follow_redirects=False,
     )
     response.raise_for_status()
-    results = response.json()["results"]
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError("Unexpected CORE response")
+    return data
+
+
+async def core_work(client, work_id: int) -> dict:
+    """Fetch the complete CORE work record, including full text when available."""
+    return await _core_get(client, f"works/{work_id}")
+
+
+async def core(client, query, limit=5):
+    """Search CORE works through the backend using CORE's native query syntax."""
+    data = await _core_get(client, "search/works/", {"q": query, "limit": limit})
+    results = data.get("results")
     if not isinstance(results, list):
         raise ValueError("Unexpected CORE search response")
 

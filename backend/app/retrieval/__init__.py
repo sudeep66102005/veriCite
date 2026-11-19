@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import re
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -24,6 +25,7 @@ from app.models import CoverageStatus, DocumentBlock, Passage, ResolvedSource
 # ---------------------------------------------------------------------------
 
 _embedding_model = None
+_embedding_lock = threading.Lock()
 
 
 def get_embedding_model():
@@ -284,8 +286,9 @@ def _parse_pdf(tmp_path: Path) -> list[tuple[str, str | None, int | None, str | 
 # ---------------------------------------------------------------------------
 
 def _embed_texts(texts: list[str]) -> np.ndarray:
-    model = get_embedding_model()
-    return model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+    with _embedding_lock:
+        model = get_embedding_model()
+        return model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
 
 
 def _rank_passages(
@@ -306,8 +309,8 @@ def _rank_passages(
     # Score each passage per claim, accumulate max
     scores = np.zeros(len(passages))
 
-    for claim in claims_text:
-        claim_emb = _embed_texts([claim])[0]
+    claims_text = list(dict.fromkeys(claims_text))
+    for claim, claim_emb in zip(claims_text, _embed_texts(claims_text)):
         for i, (p_emb, passage) in enumerate(zip(passage_embeddings, passages)):
             sim = _cosine_similarity(claim_emb, p_emb)
             boost = _lexical_boost(claim, passage.verbatim_text)
@@ -402,7 +405,7 @@ async def retrieve_source(
 
     if have_pdf and tmp_path is not None:
         try:
-            raw_chunks = _parse_pdf(tmp_path)
+            raw_chunks = await asyncio.to_thread(_parse_pdf, tmp_path)
             if raw_chunks:
                 coverage = CoverageStatus.full_text
             else:
@@ -451,7 +454,7 @@ async def retrieve_source(
     # ------------------------------------------------------------------
     if claims_text:
         try:
-            passages = _rank_passages(passages, claims_text, top_k=10)
+            passages = await asyncio.to_thread(_rank_passages, passages, claims_text, top_k=10)
         except Exception:
             # If embedding fails (model not downloaded, etc.) return unranked first 10
             passages = passages[:10]

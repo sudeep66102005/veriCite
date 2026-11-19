@@ -120,3 +120,5 @@ Configure provider settings on the FastAPI server:
 | `OPENALEX_API_KEY` | Authenticated OpenAlex requests |
 | `SEMANTIC_SCHOLAR_API_KEY` | Optional authenticated Semantic Scholar requests |
 | `UNPAYWALL_EMAIL` | Enables Unpaywall lookups for resolved DOIs |
+
+Verification retrieves selectable PDF passages with PyMuPDF and ranks them by term relevance. Set `EMBEDDING_MODEL` to enable sentence-transformer ranking on a backend provisioned for that model.

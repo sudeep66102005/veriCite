@@ -222,7 +222,7 @@ async def unpaywall_pdf_urls(doi: str, client: httpx.AsyncClient) -> list[str]:
     return list(dict.fromkeys(location["url_for_pdf"] for location in locations if location.get("url_for_pdf")))
 
 
-def match_provider_work(ref: Reference, doi: str | None, works: list[dict], provider: str) -> dict:
+def match_provider_work(ref: Reference, doi: str | None, works: list[dict], provider: str, *, verified_doi: bool = False) -> dict:
     matches = []
     for work in works:
         if provider == "openalex":
@@ -233,7 +233,7 @@ def match_provider_work(ref: Reference, doi: str | None, works: list[dict], prov
             title, year, candidate_doi = work.get("title"), work.get("year"), _doi((work.get("externalIds") or {}).get("DOI"))
         if doi and candidate_doi != doi:
             continue
-        if _matches_reference(ref, title, authors, year):
+        if (verified_doi and doi and candidate_doi == doi) or _matches_reference(ref, title, authors, year):
             matches.append({**work, "matched_metadata": (title, authors, year, candidate_doi)})
     return matches[0] if len(matches) == 1 else {}
 
@@ -263,7 +263,8 @@ async def resolve_reference(ref: Reference, client: httpx.AsyncClient) -> Resolv
     if status == IdentityStatus.matched:
         doi = metadata[3]
 
-    openalex = match_provider_work(ref, doi, await _openalex_lookup(ref, doi, client), "openalex")
+    openalex = match_provider_work(ref, doi, await _openalex_lookup(ref, doi, client), "openalex",
+                                  verified_doi=status == IdentityStatus.matched)
     if openalex:
         if status != IdentityStatus.matched:
             metadata = openalex["matched_metadata"]

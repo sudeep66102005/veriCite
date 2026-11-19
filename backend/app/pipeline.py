@@ -169,8 +169,12 @@ async def run_pipeline(
         # ------------------------------------------------------------------
         update_job(3, JobState.running)
         resolved_sources: list[ResolvedSource] = []
+        claims_by_id = {claim.claim_id: claim for claim in claims}
+        linked_ref_ids = {link.ref_id for link in links if link.claim_id in claims_by_id}
+        linked_refs = [ref for ref in refs if ref.ref_id in linked_ref_ids]
         try:
-            resolved_sources = await resolve_all_references(refs)
+            if linked_refs:
+                resolved_sources = await resolve_all_references(linked_refs)
             for src in resolved_sources:
                 save_resolved_source(src)
         except Exception as e:
@@ -187,9 +191,9 @@ async def run_pipeline(
             # search queries when fetching relevant passages.
             claims_by_ref: dict[str, list[str]] = defaultdict(list)
             for link in links:
-                for claim in claims:
-                    if claim.claim_id == link.claim_id:
-                        claims_by_ref[link.ref_id].append(claim.normalized_text)
+                claim = claims_by_id.get(link.claim_id)
+                if claim:
+                    claims_by_ref[link.ref_id].append(claim.normalized_text)
 
             async with httpx.AsyncClient(
                 timeout=PROVIDER_TIMEOUT,
@@ -197,12 +201,13 @@ async def run_pipeline(
                 max_redirects=3,
             ) as client:
 
+                retrieval_slots = asyncio.Semaphore(2)
+
                 async def retrieve_one(src: ResolvedSource) -> None:
                     claim_texts = claims_by_ref.get(src.ref_id, [])
                     try:
-                        updated_src, passages = await retrieve_source(
-                            src, claim_texts, client
-                        )
+                        async with retrieval_slots:
+                            updated_src, passages = await retrieve_source(src, claim_texts, client)
                         save_resolved_source(updated_src)
                         save_passages(passages)
                         retrieved_sources[src.source_id] = updated_src
@@ -227,24 +232,25 @@ async def run_pipeline(
                 src.ref_id: retrieved_sources.get(src.source_id, src) for src in resolved_sources
             }
 
-            for link in links:
-                claim = next(
-                    (c for c in claims if c.claim_id == link.claim_id), None
-                )
+            assessment_slots = asyncio.Semaphore(4)
+
+            async def assess_link(link: ClaimReferenceLink) -> Assessment | None:
+                claim = claims_by_id.get(link.claim_id)
                 source = source_by_ref.get(link.ref_id)
                 if claim is None or source is None:
-                    continue
+                    return None
                 passages = all_passages.get(source.source_id, [])
                 try:
-                    assessment = await assess_claim_reference_pair(
-                        claim, source, passages, source.is_retracted
-                    )
+                    async with assessment_slots:
+                        assessment = await assess_claim_reference_pair(claim, source, passages, source.is_retracted)
                     save_assessment(assessment)
-                    all_assessments.append(assessment)
-                except Exception as e:
-                    stage_errors.append(
-                        f"Stage 5 error for claim {link.claim_id} \u00d7 ref {link.ref_id}: {e}"
-                    )
+                    return assessment
+                except Exception as exc:
+                    stage_errors.append(f"Stage 5 error for claim {link.claim_id} × ref {link.ref_id}: {exc}")
+                    return None
+
+            assessed = await asyncio.gather(*(assess_link(link) for link in links))
+            all_assessments = [assessment for assessment in assessed if assessment is not None]
         except Exception as e:
             stage_errors.append(f"Stage 5 error: {e}")
 
@@ -255,7 +261,7 @@ async def run_pipeline(
             job_id=job_id,
             document_id=document_id if "document_id" in dir() else None,
             claims=claims,
-            refs=refs,
+            refs=linked_refs,
             links=links,
             sources=resolved_sources,
             assessments=all_assessments,

@@ -1,10 +1,11 @@
 """Deterministic API checks; no live provider requests or credentials needed."""
 import unittest
+import os
 from unittest.mock import patch, AsyncMock
 import httpx
 from fastapi.testclient import TestClient
 from main import app
-from integrations.providers import search_all
+from integrations.providers import core, search_all
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
@@ -52,6 +53,36 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('429', row['extraction_error'])
         self.assertIsNone(row['assessment'])
         self.assertEqual(row['evidence'], [])
+
+    async def test_core_search_auth_query_and_full_text_metadata(self):
+        query = 'authors:"Yann LeCun" AND yearPublished>=2020'
+        client = AsyncMock()
+        client.get.return_value = httpx.Response(200, request=httpx.Request(
+            "GET", "https://api.core.ac.uk/v3/search/works/"
+        ), json={"results": [
+            {"id": 123, "title": "Study", "authors": [{"name": "Yann LeCun"}],
+             "yearPublished": 2021, "doi": "10.1234/example",
+             "downloadUrl": "https://example.org/study.pdf"},
+            {"id": 124, "title": "Metadata only", "fullText": "Not available for public API users."},
+        ]})
+        with patch.dict(os.environ, {"CORE_API_KEY": "test-key"}):
+            papers = await core(client, query, 2)
+        client.get.assert_awaited_once_with(
+            "https://api.core.ac.uk/v3/search/works/",
+            params={"q": query, "limit": 2},
+            headers={"Authorization": "Bearer test-key", "Accept": "application/json"},
+            follow_redirects=False,
+        )
+        self.assertEqual(papers[0]["authors"], ["Yann LeCun"])
+        self.assertEqual(papers[0]["year"], 2021)
+        self.assertEqual(papers[0]["open_access_pdf"], "https://example.org/study.pdf")
+        self.assertTrue(papers[0]["has_full_text"])
+        self.assertFalse(papers[1]["has_full_text"])
+
+    async def test_core_only_search_requires_a_key(self):
+        with patch.dict(os.environ, {"CORE_API_KEY": ""}):
+            with self.assertRaisesRegex(ValueError, "CORE_API_KEY"):
+                await search_all('learning', providers=['core'])
 
     async def test_partial_success_and_safe_errors(self):
         good = AsyncMock(return_value=[{'title':'Study','doi':'10.1/test'}])

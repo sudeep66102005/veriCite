@@ -170,7 +170,8 @@ async def run_pipeline(
         update_job(3, JobState.running)
         resolved_sources: list[ResolvedSource] = []
         claims_by_id = {claim.claim_id: claim for claim in claims}
-        linked_ref_ids = {link.ref_id for link in links if link.claim_id in claims_by_id}
+        assessable_ids = {claim.claim_id for claim in claims if not claim.extraction_error}
+        linked_ref_ids = {link.ref_id for link in links if link.claim_id in assessable_ids}
         linked_refs = [ref for ref in refs if ref.ref_id in linked_ref_ids]
         try:
             if linked_refs:
@@ -192,7 +193,7 @@ async def run_pipeline(
             claims_by_ref: dict[str, list[str]] = defaultdict(list)
             for link in links:
                 claim = claims_by_id.get(link.claim_id)
-                if claim:
+                if claim and not claim.extraction_error:
                     claims_by_ref[link.ref_id].append(claim.normalized_text)
 
             async with httpx.AsyncClient(
@@ -237,7 +238,7 @@ async def run_pipeline(
             async def assess_link(link: ClaimReferenceLink) -> Assessment | None:
                 claim = claims_by_id.get(link.claim_id)
                 source = source_by_ref.get(link.ref_id)
-                if claim is None or source is None:
+                if claim is None or claim.extraction_error or source is None:
                     return None
                 passages = all_passages.get(source.source_id, [])
                 try:

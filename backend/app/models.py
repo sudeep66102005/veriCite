@@ -100,6 +100,7 @@ class Claim(BaseModel):
     block_id: str
     original_span: str
     normalized_text: str
+    extraction_error: str | None = None
     char_start: int | None = None
     char_end: int | None = None
 

@@ -28,6 +28,7 @@ export function getJobStatus(jobId: string, signal?: AbortSignal) {
   return request<VerificationStatus>(`/api/verify/${encodeURIComponent(jobId)}`, { signal });
 }
 export interface VerificationRow {
+  extraction_error?: string | null;
   id: string;
   text: string;
   marker: string | null;

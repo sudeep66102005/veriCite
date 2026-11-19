@@ -180,6 +180,7 @@ async def run_pipeline(
         # STAGE 4: Retrieve passages per unique source
         # ------------------------------------------------------------------
         update_job(4, JobState.running)
+        retrieved_sources: dict[str, ResolvedSource] = {}
         all_passages: dict[str, list[Passage]] = {}  # source_id → passages
         try:
             # Group claim texts by ref_id so the retriever can use them as
@@ -204,6 +205,7 @@ async def run_pipeline(
                         )
                         save_resolved_source(updated_src)
                         save_passages(passages)
+                        retrieved_sources[src.source_id] = updated_src
                         all_passages[src.source_id] = passages
                     except Exception as exc:
                         stage_errors.append(
@@ -222,7 +224,7 @@ async def run_pipeline(
         all_assessments: list[Assessment] = []
         try:
             source_by_ref: dict[str, ResolvedSource] = {
-                src.ref_id: src for src in resolved_sources
+                src.ref_id: retrieved_sources.get(src.source_id, src) for src in resolved_sources
             }
 
             for link in links:

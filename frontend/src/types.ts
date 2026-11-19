@@ -2,7 +2,7 @@ export const verdicts = ['Supported', 'Partly supported', 'Unsupported', 'Contra
 export type Verdict = typeof verdicts[number];
 export type Confidence = 'High' | 'Medium' | 'Low' | null;
 export type ReviewDecision = 'Reviewed' | 'Needs follow-up';
-export type Mode = 'Sample demo' | 'Custom text · unverified' | 'PDF · unverified' | 'PDF workflow simulation';
+export type Mode = 'API verification' | 'Sample demo' | 'Custom text · unverified' | 'PDF · unverified' | 'PDF workflow simulation';
 export interface Claim {
   id: string;
   claim: string;

@@ -76,3 +76,24 @@ For an existing Python web service using the repository root, use these settings
 Set `GEMINI_API_KEY` and `GEMINI_MODEL` in the backend service environment for
 live claim extraction and assessment. Contact details and optional provider
 settings are listed in `.env.example`.
+
+
+### CORE works search
+
+Set `CORE_API_KEY` in `backend/.env` for local development or in the backend
+service environment for deployment. Get a key from [CORE](https://core.ac.uk/services/api).
+The backend includes CORE in default discovery when the key is configured.
+
+Use `GET /api/evidence/search` with `providers=core` to search CORE alone.
+Pass a claim, free text, or a CORE query in the URL-encoded `q` parameter.
+
+| Search | Example `q` |
+| --- | --- |
+| Title | `title:"machine learning"` |
+| DOI | `doi:"10.1038/nature14539"` |
+| Author | `authors:"Yann LeCun"` |
+| Publication year | `title:"deep learning" AND yearPublished>=2020` |
+
+CORE results include authors, publication year, DOI, abstract and, when
+available, a full-text download link. `has_full_text` reflects the information
+CORE returned. Discovery results are candidates for review.

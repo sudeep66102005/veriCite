@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-multipart
+pydantic>=2,<3
+docling
+google-genai
+httpx
+sentence-transformers
+python-dotenv

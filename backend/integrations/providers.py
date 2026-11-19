@@ -89,6 +89,53 @@ async def arxiv(client, query, limit=5):
                   "arxiv", " ".join(e.findtext("a:summary", default="", namespaces=ns).split()))
             for e in root.findall("a:entry", ns)]
 
+async def core(client, query, limit=5):
+    """Search CORE works through the backend using CORE's native query syntax."""
+    api_key = os.getenv("CORE_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("CORE_API_KEY must be configured")
+
+    response = await client.get(
+        "https://api.core.ac.uk/v3/search/works/",
+        params={"q": query, "limit": limit},
+        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+        follow_redirects=False,
+    )
+    response.raise_for_status()
+    results = response.json()["results"]
+    if not isinstance(results, list):
+        raise ValueError("Unexpected CORE search response")
+
+    papers = []
+    for work in results:
+        if not isinstance(work, dict) or not work.get("title"):
+            continue
+        core_id = work.get("id")
+        doi = work.get("doi") or None
+        download_url = work.get("downloadUrl") or None
+        full_text = work.get("fullText")
+        has_full_text = bool(download_url) or (
+            isinstance(full_text, str)
+            and bool(full_text.strip())
+            and full_text.strip().lower().rstrip(".") != "not available for public api users"
+        )
+        authors = work.get("authors") or []
+        url = (
+            f"https://core.ac.uk/works/{core_id}" if core_id
+            else f"https://doi.org/{doi}" if doi
+            else download_url
+        )
+        papers.append(paper(
+            work["title"], url, doi, work.get("yearPublished"), "core", work.get("abstract"),
+            core_id=core_id,
+            authors=[author["name"] for author in authors
+                     if isinstance(author, dict) and author.get("name")],
+            open_access_pdf=download_url,
+            has_full_text=has_full_text,
+        ))
+    return papers
+
+
 async def agris(client, query, limit=5):
     # AGRIS does not offer the same stable public search contract as the other providers.
     # Use OpenAlex for agricultural discovery until an approved AGRIS API is configured.
@@ -108,14 +155,19 @@ async def unpaywall(client, doi):
 SEARCH_PROVIDERS = {
     "openalex": openalex, "semantic_scholar": semantic_scholar,
     "crossref": crossref, "pubmed": pubmed,
-    "europe_pmc": europe_pmc, "arxiv": arxiv,
+    "europe_pmc": europe_pmc, "arxiv": arxiv, "core": core,
 }
 
 async def search_all(query, limit=5, providers=None):
-    selected = providers or list(SEARCH_PROVIDERS)
+    core_configured = bool(os.getenv("CORE_API_KEY", "").strip())
+    selected = providers or [
+        name for name in SEARCH_PROVIDERS if name != "core" or core_configured
+    ]
     unknown = set(selected) - set(SEARCH_PROVIDERS)
     if unknown:
         raise ValueError(f"Unknown providers: {sorted(unknown)}")
+    if selected == ["core"] and not core_configured:
+        raise ValueError("CORE_API_KEY must be configured")
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
         results = await asyncio.gather(
             *(SEARCH_PROVIDERS[name](client, query, limit) for name in selected),

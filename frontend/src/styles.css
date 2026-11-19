@@ -37,3 +37,20 @@
 .review-table>div{overflow:auto;margin-top:1.25vw}.review-table table{width:100%;border-collapse:collapse;font-size:clamp(14px,1.42vw,24px)}.review-table th,.review-table td{text-align:left;padding:.85vw 1.2vw;border-bottom:1px solid #dfe1e8}.review-table th{background:#eff0f5}.review-table th:first-child{width:50%}.review-table th:nth-child(2){width:16%}.review-table th:nth-child(3){width:12%}.review-table td button{font:inherit;text-align:left;background:transparent;color:inherit;padding:0}.review-table td button:hover{text-decoration:underline}.citation{color:#3b32d8}.result-chip{display:inline-block;border-radius:8px;padding:.38vw .9vw;font-weight:600;white-space:nowrap}.negative{color:#9b1532;background:#ffdade}.caution{color:#784500;background:#ffeab5}
 @media(max-width:800px){.verisite{--rail:64px}.verisite .sidebar{padding:18px 6px}.site-brand{font-size:0;margin:0 auto 24px;padding:0}.site-brand span{width:34px;height:34px}.verisite .nav-link,.ask-site{justify-content:center;padding:14px 6px}.verisite .nav-link span,.ask-site span{display:none}.verisite .nav-link svg,.ask-site svg{width:23px;height:23px}.analytics{padding:20px 14px}.paper-picker select{width:100%;padding:8px}.analytics-card{padding:14px}.chart-grid{grid-template-columns:1fr}.bars{gap:12px}.bar-row i{height:18px}.metric-icon{width:30px;height:30px;right:8px;bottom:10px}.review-table table{min-width:620px}}
 @media(max-width:530px){.metric-grid{grid-template-columns:1fr}.metric{min-height:0;display:flex;align-items:center;gap:12px}.metric strong{font-size:26px;margin:0 38px 0 auto}.metric-icon{bottom:50%;transform:translateY(50%)}.analytics h1{margin-bottom:16px}.paper-picker,.metric-grid,.chart-grid{margin-bottom:16px}.chart-grid,.metric-grid{gap:10px}.bar-row,.chart-grid>section:last-child .bar-row{grid-template-columns:40% 1fr}}
+
+/* Compact analytics typography */
+.verisite .site-brand{font-size:24px}
+.verisite .nav-link,.verisite .ask-site,.analytics .paper-picker,.analytics .bar-row{font-size:15px}
+.analytics h1{font-size:30px;margin-bottom:18px}
+.analytics h2{font-size:20px}
+.analytics .metric h2{font-size:16px}
+.analytics .metric strong{font-size:38px;margin-top:8px}
+.analytics .review-table table{font-size:14px}
+.analytics .metric{min-height:108px;padding:18px 20px}
+.analytics .metric-icon{width:44px;height:44px;bottom:18px;right:18px}
+.analytics .bar-row{min-height:30px}
+.analytics .bar-row i{height:21px}
+.analytics .review-table th,.analytics .review-table td{padding:11px 14px}
+@media(min-width:801px){.verisite{--rail:210px}.verisite .sidebar{padding:24px 12px}.verisite .nav-link,.verisite .ask-site{gap:12px;padding:12px}.verisite .nav-link svg,.verisite .ask-site svg{width:19px;height:19px}.analytics .chart-grid,.analytics .metric-grid{gap:16px;margin-bottom:18px}.analytics .analytics-card{padding:18px 20px}.analytics .bars{gap:10px}}
+@media(max-width:800px){.verisite .site-brand{font-size:0}}
+@media(max-width:530px){.analytics h1{font-size:26px}.analytics .metric{min-height:0;padding:12px}.analytics .metric strong{font-size:25px}.analytics .metric-icon{width:28px;height:28px;bottom:50%;right:10px}}

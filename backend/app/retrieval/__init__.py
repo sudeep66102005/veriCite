@@ -17,7 +17,10 @@ from typing import Optional
 import httpx
 import numpy as np
 
-from app.config import EMBEDDING_MODEL, MAX_DOWNLOAD_SIZE_MB, PROVIDER_TIMEOUT, SEMANTIC_SCHOLAR_API_KEY
+from app.config import (
+    EMBEDDING_MODEL, MAX_DOWNLOAD_SIZE_MB, OPENALEX_API_KEY,
+    OPENALEX_EMAIL, PROVIDER_TIMEOUT, SEMANTIC_SCHOLAR_API_KEY,
+)
 from app.models import CoverageStatus, DocumentBlock, Passage, ResolvedSource
 
 # ---------------------------------------------------------------------------
@@ -89,14 +92,20 @@ def _chunk_abstract(text: str) -> list[str]:
 async def _fetch_abstract_openalex(
     openalex_id: str | None, canonical_doi: str | None, client: httpx.AsyncClient
 ) -> str | None:
-    if openalex_id:
-        url = openalex_id  # OpenAlex IDs are URLs like https://openalex.org/W...
+    work_id = openalex_id.rsplit("/", 1)[-1] if openalex_id else ""
+    if re.fullmatch(r"W[0-9]+", work_id):
+        url = f"https://api.openalex.org/works/{work_id}"
     elif canonical_doi:
         url = f"https://api.openalex.org/works/doi:{canonical_doi}"
     else:
         return None
+    params = {}
+    if OPENALEX_API_KEY:
+        params["api_key"] = OPENALEX_API_KEY
+    if OPENALEX_EMAIL:
+        params["mailto"] = OPENALEX_EMAIL
     try:
-        resp = await client.get(url, timeout=PROVIDER_TIMEOUT)
+        resp = await client.get(url, params=params, timeout=PROVIDER_TIMEOUT)
         if resp.status_code == 200:
             data = resp.json()
             # OpenAlex stores abstract as inverted index

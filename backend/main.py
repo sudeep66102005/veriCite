@@ -36,3 +36,8 @@ async def open_access(doi: str = Query(min_length=3, max_length=250)):
 
     except httpx.RequestError as exc:
         raise HTTPException(status_code=502, detail="Unpaywall is temporarily unreachable; please retry.") from exc
+
+
+@app.get("/health")
+def liveness() -> dict[str, str]:
+    return {"status": "ok"}

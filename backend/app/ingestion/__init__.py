@@ -317,12 +317,16 @@ def _latex_blocks(content: bytes, document_id: str) -> tuple[list[DocumentBlock]
 _KNOWN_SECTION_NAMES = {
     "abstract", "introduction", "background", "related work",
     "methodology", "methods", "results", "discussion", "conclusion",
-    "conclusions", "references", "bibliography", "acknowledgements",
+    "conclusions", "references", "bibliography", "works cited", "acknowledgements",
     "acknowledgments", "appendix", "supplementary",
 }
 
 _RE_MD_HEADING = re.compile(r"^#{1,6}\s+(.+)$")
 _RE_ALL_CAPS = re.compile(r"^[A-Z][A-Z0-9 \t\-:,/()&]{3,}$")
+_RE_BIB_HEADING = re.compile(
+    r"(^[ \t]*(?:#{1,6}[ \t]+)?(?:references|bibliography|works cited)[ \t]*:?[ \t]*\r?$)",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _is_heading(para: str) -> bool:
@@ -367,7 +371,12 @@ def _plain_blocks(content: bytes, document_id: str) -> tuple[list[DocumentBlock]
     except Exception as exc:
         raise ValueError(f"Could not decode text content: {exc}") from exc
 
-    paragraphs = re.split(r"\n{2,}", text)
+    # Browser-extracted text often puts the heading and entries on adjacent lines.
+    paragraphs = [
+        paragraph
+        for section in _RE_BIB_HEADING.split(text)
+        for paragraph in re.split(r"\r?\n(?:[ \t]*\r?\n)+", section)
+    ]
 
     blocks: list[DocumentBlock] = []
     index = 0
@@ -378,13 +387,11 @@ def _plain_blocks(content: bytes, document_id: str) -> tuple[list[DocumentBlock]
     for para in paragraphs:
         stripped = para.strip()
         if not stripped:
-            char_offset += len(para) + 2  # account for double newline
             continue
 
-        # Locate paragraph in original text for accurate char offsets
-        para_start = text.find(para, char_offset if char_offset <= len(text) else 0)
-        if para_start == -1:
-            para_start = char_offset
+        raw_start = text.index(para, char_offset)
+        char_offset = raw_start + len(para)
+        para_start = raw_start + len(para) - len(para.lstrip())
         para_end = para_start + len(stripped)
 
         is_hd = _is_heading(stripped)
@@ -393,7 +400,7 @@ def _plain_blocks(content: bytes, document_id: str) -> tuple[list[DocumentBlock]
             heading_label = _heading_text(stripped)
             current_section = heading_label
             normalized_hd = heading_label.lower()
-            if "reference" in normalized_hd or "bibliography" in normalized_hd:
+            if "reference" in normalized_hd or "bibliography" in normalized_hd or normalized_hd == "works cited":
                 in_bib = True
             else:
                 in_bib = False
@@ -416,7 +423,6 @@ def _plain_blocks(content: bytes, document_id: str) -> tuple[list[DocumentBlock]
             )
         )
         index += 1
-        char_offset = para_end + 2  # skip the double newline separator
 
     if not blocks:
         raise ValueError("Parsing yielded no usable content")

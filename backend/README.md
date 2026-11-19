@@ -42,3 +42,22 @@ From the repository root, run `python -m unittest discover -s backend -p 'test_*
 These tests mock provider responses; passing tests do not establish live provider availability.
 If your environment requires a SOCKS proxy, install the optional HTTPX dependency with
 `pip install 'httpx[socks]'` before making network requests.
+
+## Verification pipeline scaffold
+
+| Package | Input | Planned output |
+|---|---|---|
+| app/ingestion | PDF, DOCX, LaTeX or raw text | Addressable document blocks, tables, section headers and page or text locations |
+| app/extraction | Document blocks with original citation markers | Bibliography, atomic claims and claim–reference links, including ambiguous grouped citations |
+| app/resolution | Unique bibliography entries | Candidate matches, field mismatches, canonical source ID, retraction and access information |
+| app/retrieval | Resolved source and atomic claim | Ranked passages from that specific source, with verbatim text and page or table locations |
+| app/verification | One claim–paper pair and its evidence | Support verdict or reason to abstain, issue flags, evidence IDs and review status |
+| app/reporting | Results and incomplete assessments | Manuscript-level counts, traceable per-claim results and review flags |
+| app/providers | Requests from pipeline stages | Gemini extraction and classification, Crossref identity matching, OpenAlex source discovery, Semantic Scholar fallback |
+
+## Planned API contract
+
+- `POST /verifications` accepts a manuscript and returns a job ID.
+- `GET /verifications/{id}` returns processing status or the final report.
+
+The verification job endpoints above are planned. Both `uvicorn main:app` and `uvicorn app.main:app` serve the discovery API and `/health` from the backend directory.

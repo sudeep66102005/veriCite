@@ -92,6 +92,11 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
             job = create_job("benchmark.txt", "text/plain")
             await run_pipeline(job.job_id, manuscript.encode(), "benchmark.txt", "text/plain")
         report = await verify_report(job.job_id)
+        from benchmark import evaluate
+        evaluation = evaluate(report)
+        self.assertEqual(evaluation["passed"], evaluation["expected"], evaluation)
+        self.assertEqual(evaluate({"rows": []})["passed"], 0)
+        self.assertEqual(evaluate({"rows": [*report["rows"], report["rows"][0]]})["passed"], 4)
         rows = report["rows"]
         self.assertEqual(len(rows), 5)
         self.assertEqual([r["assessment"]["semantic_verdict"] if r["assessment"] else None for r in rows],
@@ -124,3 +129,33 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
                 doc.save(path)
             [passage] = _parse_pdf(path)
             self.assertEqual(passage, ("Students improved their scores in both cohorts.", "Results", 2, None))
+
+    def test_simultaneous_admission_stays_within_capacity(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        gate = Barrier(16)
+
+        def submit(index):
+            gate.wait(timeout=10)
+            return database.reserve_verification(str(index), str(index), 10000)
+
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            self.assertEqual(sum(pool.map(submit, range(16))), 4)
+
+    async def test_one_unknown_passage_invalidates_entire_verdict(self):
+        from app.models import Claim
+        from app.verification import assess_claim_reference_pair
+        from unittest.mock import AsyncMock
+        claim = Claim(claim_id="c", block_id="b", document_id="d", normalized_text="Test claim", original_span="Test claim")
+        source = ResolvedSource(source_id="s", ref_id="r", coverage=CoverageStatus.full_text, identity_status=IdentityStatus.matched)
+        passage = Passage(source_id="s", passage_id="known", verbatim_text="The original finding.")
+        response = dict(verdict="SUPPORTED", explanation="Test", issue_flags=[], evidence_passage_ids=["known", "invented"])
+        with patch("app.providers._request_json", AsyncMock(return_value=response)):
+            result = await assess_claim_reference_pair(claim, source, [passage], False)
+        self.assertIsNone(result.semantic_verdict)
+        self.assertEqual(result.assessment_status.value, "unable_to_assess")
+
+    def test_abstract_quotes_are_verbatim(self):
+        from app.retrieval import _chunk_abstract
+        text = "No change. Was it significant? Only in one cohort"
+        self.assertEqual(_chunk_abstract(text), ["No change.", "Was it significant?", "Only in one cohort"])

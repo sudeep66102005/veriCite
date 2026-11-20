@@ -122,3 +122,14 @@ Configure provider settings on the FastAPI server:
 | `UNPAYWALL_EMAIL` | Enables Unpaywall lookups for resolved DOIs |
 
 Verification retrieves selectable PDF passages with PyMuPDF and ranks them by term relevance. Set `EMBEDDING_MODEL` to enable sentence-transformer ranking on a backend provisioned for that model.
+
+### Reproduce the verification benchmark
+
+Run `python backend/benchmark.py --api https://YOUR-BACKEND` from the repository root
+to submit the five public test statements. For an existing backend report, use
+`python backend/benchmark.py --report report.json`. Each case checks the verdict,
+citation identity and evidence trace. Missing, duplicate and unexpected results
+fail the run. Exit status 0 means all five cases passed, 1 means a mismatch,
+and 2 indicates that the benchmark could not complete. This small benchmark
+measures these five cases only. A reviewer should inspect whether each passage
+scientifically justifies the explanation.

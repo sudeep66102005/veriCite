@@ -4,6 +4,7 @@ import os
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
 import httpx
+from integrations.http import metadata_get
 
 TIMEOUT = 20
 
@@ -12,7 +13,7 @@ def paper(title, url=None, doi=None, year=None, source=None, abstract=None, **ex
             "source": source, "abstract": abstract, **extra}
 
 async def get_json(client, url, params=None, headers=None):
-    r = await client.get(url, params=params, headers=headers)
+    r = await metadata_get(client, url, params=params, headers=headers)
     r.raise_for_status()
     return r.json()
 
@@ -78,7 +79,7 @@ async def europe_pmc(client, query, limit=5):
             for x in data.get("resultList", {}).get("result", [])]
 
 async def arxiv(client, query, limit=5):
-    r = await client.get("https://export.arxiv.org/api/query",
+    r = await metadata_get(client, "https://export.arxiv.org/api/query",
                          params={"search_query": f"all:{query}", "start": 0, "max_results": limit})
     r.raise_for_status()
     root = ET.fromstring(r.text)
@@ -94,7 +95,7 @@ async def _core_get(client, path, params=None):
     if not api_key:
         raise ValueError("CORE_API_KEY must be configured")
 
-    response = await client.get(
+    response = await metadata_get(client,
         f"https://api.core.ac.uk/v3/{path}",
         params=params,
         headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},

@@ -84,7 +84,11 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
             result = {"verdict": "CONTRADICTORY" if "90 km" in claim else "SUPPORTED",
                       "evidence_passage_ids": [passages[0]["passage_id"]], "issue_flags": [],
                       "explanation": "Compared the same model and units."}
-            if newer:
+            if "regardless of the cosmological model" in claim:
+                result["verdict"] = "PARTLY_SUPPORTED"
+            if "salinity" in claim:
+                result["verdict"] = "UNSUPPORTED"
+            if newer and "modern estimate" in claim:
                 result.update(update_url=update["url"], update_quote=modern, update_reason="The later estimate revised the value.")
             return result
 
@@ -96,11 +100,11 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
         evaluation = evaluate(report)
         self.assertEqual(evaluation["passed"], evaluation["expected"], evaluation)
         self.assertEqual(evaluate({"rows": []})["passed"], 0)
-        self.assertEqual(evaluate({"rows": [*report["rows"], report["rows"][0]]})["passed"], 4)
+        self.assertEqual(evaluate({"rows": [*report["rows"], report["rows"][0]]})["passed"], evaluation["expected"] - 1)
         rows = report["rows"]
-        self.assertEqual(len(rows), 5)
+        self.assertEqual(len(rows), 8)
         self.assertEqual([r["assessment"]["semantic_verdict"] if r["assessment"] else None for r in rows],
-                         ["SUPPORTED", "CONTRADICTORY", "POSSIBLY_OUTDATED", None, None])
+                         ["SUPPORTED", "CONTRADICTORY", "POSSIBLY_OUTDATED", None, None, "PARTLY_SUPPORTED", "UNSUPPORTED", "SUPPORTED"])
         self.assertEqual(rows[2]["assessment"]["update_evidence"]["quote"], modern)
         self.assertEqual(rows[0]["coverage"], "full_text")
         self.assertEqual(rows[0]["evidence"][0]["page"], 1)

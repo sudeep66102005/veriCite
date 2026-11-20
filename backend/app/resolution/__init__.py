@@ -14,6 +14,7 @@ import uuid
 from urllib.parse import quote
 
 import httpx
+from integrations.http import metadata_get
 
 from app.config import (
     CROSSREF_MAILTO,
@@ -95,7 +96,7 @@ async def _crossref_doi_lookup(
     if CROSSREF_MAILTO:
         params["mailto"] = CROSSREF_MAILTO
     try:
-        resp = await client.get(url, params=params, timeout=PROVIDER_TIMEOUT)
+        resp = await metadata_get(client, url, params=params, timeout=PROVIDER_TIMEOUT)
         payload = resp.json() if resp.is_success else {}
     except (httpx.HTTPError, ValueError):
         return IdentityStatus.lookup_failed, None, None, [], None, None
@@ -135,7 +136,7 @@ async def _crossref_bib_search(
         "mailto": CROSSREF_MAILTO or "",
     }
     try:
-        resp = await client.get(url, params=params, timeout=PROVIDER_TIMEOUT)
+        resp = await metadata_get(client, url, params=params, timeout=PROVIDER_TIMEOUT)
         payload = resp.json() if resp.is_success else {}
     except (httpx.HTTPError, ValueError):
         return IdentityStatus.lookup_failed, None, [], None, None
@@ -172,7 +173,7 @@ def _matches_reference(ref: Reference, title: str | None, authors: list[str], ye
 
 async def _provider_json(client: httpx.AsyncClient, url: str, params: dict, headers: dict | None = None) -> dict:
     try:
-        response = await client.get(url, params=params, headers=headers, timeout=PROVIDER_TIMEOUT)
+        response = await metadata_get(client, url, params=params, headers=headers, timeout=PROVIDER_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         return data if isinstance(data, dict) else {}

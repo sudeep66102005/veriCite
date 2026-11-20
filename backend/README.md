@@ -1,66 +1,61 @@
-# veriCite evidence discovery backend
+# VeriCite verification and discovery API
 
-This is an initial **academic discovery** API, not yet a claim-verification system.
-Results are candidate papers; they must be read and evaluated before assigning verdicts.
+FastAPI receives manuscript text extracted by the browser, maps claims to bibliography entries,
+retrieves original publications and compares their passages with each claim. Jobs, source
+evidence and assessments are stored in SQLite. Search endpoints also return candidate papers
+for independent review. See the [workspace screenshot and architecture](../README.md).
 
-## Setup
+## Local setup
 
-```bash
-cd backend
-python -m venv .venv
-# Windows:
-.venv\\Scripts\\activate
-pip install -r requirements.txt
-copy .env.example .env
-uvicorn main:app --reload
-```
+Use Python 3.12. From the repository root, create and activate a virtual environment, install
+`pip install -r requirements.txt`, and copy `backend/.env.example` to `backend/.env`.
+Set `GEMINI_API_KEY` for live verification. Start the server with
+`uvicorn main:app --no-proxy-headers --reload`. Interactive API documentation is at
+`http://localhost:8000/docs`.
 
-Open http://localhost:8000/docs for interactive API documentation.
+The root `main.py` is the ASGI entry point used by Render and root-level Uvicorn commands.
+It imports the application defined in `backend/main.py`. When starting inside `backend/`,
+Uvicorn imports that same application's module directly.
 
-- `GET /api/health` — configured search providers
-- `GET /api/evidence/search?q=climate%20change&limit=5` — parallel search
-- `GET /api/evidence/search?q=diabetes&providers=pubmed,europe_pmc` — selected sources
-- `GET /api/evidence/open-access?doi=10.1038/nature12373` — Unpaywall DOI lookup (requires email)
+## Endpoints
 
-### Providers
+| Route | Result |
+| --- | --- |
+| `GET /health` and `GET /api/health` | Service health and discovery provider names on the API route |
+| `POST /api/verify` | Submit text and an optional filename. Returns job ID and bearer token |
+| `GET /api/verify/{job_id}` | Job state and current stage |
+| `GET /api/verify/{job_id}/claims` | Claim rows with references, evidence, verdicts and review reasons |
+| `GET /api/verify/{job_id}/report` | Completed report with assessment details and claim rows |
+| `GET /api/evidence/search` | Search selected providers with `q`, `providers` and `limit` |
+| `GET /api/evidence/open-access` | Find an open-access location by DOI |
+| `GET /api/evidence/core/works/{work_id}` | Retrieve a CORE work record |
 
-OpenAlex, Semantic Scholar, Crossref, PubMed, Europe PMC and arXiv have working integration code.
-Unpaywall resolves DOI open-access locations. Other specialist sources (CORE, AGRIS,
-OpenCitations, RePEc, Crossmark) are not yet implemented and need separate API-contract,
-authentication and/or data-model work.
+Pass the returned bearer token when reading a new job. Private workspaces may configure
+`VERIFICATION_ACCESS_KEY` and send the code in `X-Verification-Key` on submission.
+The browser keeps job tokens in memory.
 
-Some providers enforce rate limits or API keys; errors are returned under
-`provider_errors` without failing the entire search. For production, add caching,
-retry/backoff, request authentication, monitoring and normalized identifiers.
+## Provider traffic and verification quotas
 
-Never commit `.env` or API keys. This initial implementation does not upload PDFs,
-extract claims, download full texts or use AI to verify them.
+Metadata GET responses up to 256 KiB are cached in memory per process for five minutes
+with a maximum of 128 entries. Cache keys distinguish request parameters and credentials.
+Failed requests and no-store responses bypass the cache. Network errors and HTTP 429,
+502, 503 and 504 can trigger up to two retries with jittered exponential backoff.
+Retry-After delays above three seconds return control to the caller. Model submissions
+and PDF streams use their own request paths.
 
-### Deterministic checks
+Job admission uses an atomic SQLite transaction shared by workers on the same database.
+The limits are four active jobs and eight submissions per client address per hour.
+To distinguish clients behind a reverse proxy, set `TRUSTED_PROXY_CIDRS` to the ingress
+proxy addresses you control and start Uvicorn with `--no-proxy-headers` so VeriCite sees
+the actual socket peer. The app walks X-Forwarded-For from right to left through trusted
+hops. With the setting empty, the app uses the peer address. Separate service instances
+with independent SQLite files have independent quotas.
 
-From the repository root, run `python -m unittest discover -s backend -p 'test_*.py' -v`.
-These tests mock provider responses; passing tests do not establish live provider availability.
-If your environment requires a SOCKS proxy, install the optional HTTPX dependency with
-`pip install 'httpx[socks]'` before making network requests.
+## Testing
 
-## Verification pipeline scaffold
-
-| Package | Input | Planned output |
-|---|---|---|
-| app/ingestion | PDF, DOCX, LaTeX or raw text | Addressable document blocks, tables, section headers and page or text locations |
-| app/extraction | Document blocks with original citation markers | Bibliography, atomic claims and claim–reference links, including ambiguous grouped citations |
-| app/resolution | Unique bibliography entries | Candidate matches, field mismatches, canonical source ID, retraction and access information |
-| app/retrieval | Resolved source and atomic claim | Ranked passages from that specific source, with verbatim text and page or table locations |
-| app/verification | One claim–paper pair and its evidence | Support verdict or reason to abstain, issue flags, evidence IDs and review status |
-| app/reporting | Results and incomplete assessments | Manuscript-level counts, traceable per-claim results and review flags |
-| app/providers | Requests from pipeline stages | Gemini extraction and classification, Crossref identity matching, OpenAlex source discovery, Semantic Scholar fallback |
-
-## Planned API contract
-
-- `POST /verifications` accepts a manuscript and returns a job ID.
-- `GET /verifications/{id}` returns processing status or the final report.
-
-The verification job endpoints above are planned. Both `uvicorn main:app` and `uvicorn app.main:app` serve the discovery API and `/health` from the backend directory.
+From the repository root, run `python -m unittest discover -s backend -v`. CI installs
+`backend/requirements-ci.txt` for the default text/PyMuPDF path. Production requirements
+also include Docling and optional embedding support.
 
 ## Run on Render
 
@@ -70,7 +65,7 @@ For an existing Python web service using the repository root, use these settings
 |---|---|
 | Root Directory | Leave blank |
 | Build Command | `pip install -r requirements.txt` |
-| Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+| Start Command | `uvicorn main:app --no-proxy-headers --host 0.0.0.0 --port $PORT` |
 | Health Check Path | `/api/health` |
 
 Set `GEMINI_API_KEY` and `GEMINI_MODEL` in the backend service environment for
@@ -126,10 +121,10 @@ Verification retrieves selectable PDF passages with PyMuPDF and ranks them by te
 ### Reproduce the verification benchmark
 
 Run `python backend/benchmark.py --api https://YOUR-BACKEND` from the repository root
-to submit the five public test statements. For an existing backend report, use
+to submit the eight public test statements. For an existing backend report, use
 `python backend/benchmark.py --report report.json`. Each case checks the verdict,
 citation identity and evidence trace. Missing, duplicate and unexpected results
-fail the run. Exit status 0 means all five cases passed, 1 means a mismatch,
+fail the run. Exit status 0 means all eight cases passed, 1 means a mismatch,
 and 2 indicates that the benchmark could not complete. This small benchmark
-measures these five cases only. A reviewer should inspect whether each passage
+measures these eight cases only. A reviewer should inspect whether each passage
 scientifically justifies the explanation.

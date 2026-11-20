@@ -15,6 +15,7 @@ from integrations.providers import SEARCH_PROVIDERS, TIMEOUT, core_work, search_
 from app.config import GEMINI_API_KEY
 from app.pipeline import create_job, run_pipeline
 from app.database import init_db, get_job, get_claims, document_links, get_references, get_resolved_source, get_passages
+from app.peers import quota_peer
 from app.models import JobState
 from app.database import reserve_verification, finish_verification
 
@@ -100,6 +101,7 @@ async def verify(request: VerifyRequest, connection: Request, x_verification_key
     token = secrets.token_urlsafe(32)
     digest = hashlib.sha256(token.encode()).hexdigest()
     peer = connection.client.host if connection.client else "unknown"
+    peer = quota_peer(peer, connection.headers.get("x-forwarded-for"))
     if not reserve_verification(digest, peer, int(time.time())):
         raise HTTPException(429, "Verification capacity reached. Try again later.", headers={"Retry-After": "60"})
     try:

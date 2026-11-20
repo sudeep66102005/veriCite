@@ -3,12 +3,14 @@ import unittest
 import os
 from unittest.mock import patch, AsyncMock
 import httpx
+from integrations.http import clear_cache
 from fastapi.testclient import TestClient
 from main import app
 from integrations.providers import core, search_all
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
+        clear_cache()
         self.client = TestClient(app)
 
     def test_health(self):
@@ -61,6 +63,9 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(self.client.get('/api/evidence/open-access?doi=10.1/test').status_code, 400)
 
 class ProviderTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        clear_cache()
+
     async def test_rate_limited_extraction_retains_citation(self):
         from app.database import init_db
         from app.pipeline import create_job, run_pipeline

@@ -20,6 +20,9 @@ EXPECTED = [
     ("POSSIBLY_OUTDATED", "[2]", HUBBLE),
     ("UNVERIFIED", "[9]", None),
     ("UNVERIFIED", None, None),
+    ("PARTLY_SUPPORTED", "[1]", PLANCK),
+    ("UNSUPPORTED", "[1]", PLANCK),
+    ("SUPPORTED", "[2]", HUBBLE),
 ]
 
 

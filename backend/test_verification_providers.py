@@ -2,6 +2,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
 import httpx
+from integrations.http import clear_cache
 
 from app.models import CoverageStatus, IdentityStatus, Reference
 from app.resolution import resolve_reference
@@ -18,6 +19,9 @@ def reference(**fields):
 
 
 class VerificationProviderTests(IsolatedAsyncioTestCase):
+    def setUp(self):
+        clear_cache()
+
     async def test_crossref_accepts_doi_only_and_rejects_metadata_conflict(self):
         def respond(request):
             if request.url.host == "api.crossref.org":

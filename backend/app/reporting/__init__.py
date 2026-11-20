@@ -88,7 +88,11 @@ def build_report(
     # 3. stage_errors are passed through directly (already collected upstream).
 
     # 4. Assemble and return report -------------------------------------------
+    unavailable = sum(ref_id not in source_by_ref or source_by_ref[ref_id].coverage.value == "unavailable"
+                      for ref_id in unique_refs)
     return VerificationReport(
+        source_availability={"unavailable": unavailable, "cited_sources": len(unique_refs),
+                             "percent": round(100 * unavailable / len(unique_refs), 1) if unique_refs else None},
         job_id=job_id,
         document_id=document_id,
         total_claims=len(unique_claims),

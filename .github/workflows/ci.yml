@@ -12,11 +12,28 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: python -m pip install -r backend/requirements-ci.txt
-      - run: python -m unittest discover -s backend -v
+      - run: python -m pip install coverage ruff
+      - run: ruff check backend
+      - run: coverage run -m unittest discover -s backend -v
         env:
           DB_PATH: ${{ runner.temp }}/vericite-ci.sqlite
+      - run: coverage report >> "$GITHUB_STEP_SUMMARY" && coverage xml && coverage html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: |
+            coverage.xml
+            htmlcov/
   frontend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: vericite
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: frontend
@@ -28,7 +45,53 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - run: npm run lint && npm run format:check
       - run: npm test
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:a11y
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r ../backend/requirements-ci.txt
+      - name: Run browser checks with PostgreSQL and FastAPI
+        env:
+          E2E_API_ORIGIN: http://127.0.0.1:8123
+          GEMINI_API_KEY: unused-for-unmatched-citations
+          VERICITE_DATABASE_URL: postgresql://postgres:test-only@127.0.0.1:5432/vericite
+        run: |
+          python -m uvicorn main:app --app-dir ../backend --port 8123 &
+          trap 'kill $!' EXIT
+          curl --fail --retry 12 --retry-connrefused --retry-delay 1 "$E2E_API_ORIGIN/health"
+          npm run test:a11y
+  python-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pip-audit uv
+      - run: uv pip compile requirements.txt --output-file "$RUNNER_TEMP/resolved.txt"
+      - run: pip-audit --disable-pip --no-deps -r "$RUNNER_TEMP/resolved.txt"
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm audit --audit-level=high
+        working-directory: frontend
+  live-crossref:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r backend/requirements-ci.txt
+      - run: python -m unittest test_network_integration.ProductionChecks.test_live_crossref_identity
+        working-directory: backend
+        env:
+          VERICITE_LIVE_TESTS: '1'

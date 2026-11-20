@@ -11,6 +11,14 @@ Every galaxy rotates at the same speed.
 The Planck estimate of 67.4 km/s/Mpc applies regardless of the cosmological model [1].
 The Planck study measured ocean salinity from water samples [1].
 Hubble historically estimated roughly 500 km/s/Mpc in 1929 [2].
+Planck reported an uncertainty of 0.5 km/s/Mpc for the Hubble constant under base ΛCDM [1].
+The base ΛCDM fit gave a Hubble constant of 17 km/s/Mpc [1].
+The 1929 study reported a distance–velocity relation for extragalactic nebulae [2].
+Planck measured ocean salinity in the Pacific Ocean [2].
+The observing team measured the average stellar age [11].
+The reported velocities were independent of distance [12].
+All sampled clusters have the same chemical abundance.
+Every observed nebula has an identical intrinsic luminosity.
 
 References
 
@@ -30,6 +38,14 @@ References
 | The value applies regardless of the model | Partly supported | The value appears in the abstract under base ΛCDM. The universal qualifier exceeds its scope. |
 | Ocean salinity | Unsupported with sufficient full text | The cited cosmology paper does not report this measurement. Abstention indicates insufficient coverage and does not pass this case. |
 | Historical estimate in 1929 | Supported | A later estimate does not invalidate an accurate historical attribution. |
+| Planck reported an uncertainty of 0.5 km/s/Mpc for the Hubble constant under base ΛCDM [1]. | Supported | Inspect the cited paper. |
+| The base ΛCDM fit gave a Hubble constant of 17 km/s/Mpc [1]. | Contradictory | Inspect the cited paper. |
+| The 1929 study reported a distance–velocity relation for extragalactic nebulae [2]. | Supported | Inspect the cited paper. |
+| Planck measured ocean salinity in the Pacific Ocean [2]. | Unsupported | Inspect the cited paper. |
+| The observing team measured the average stellar age [11]. | Unverified | No matching reference is available. |
+| The reported velocities were independent of distance [12]. | Unverified | No matching reference is available. |
+| All sampled clusters have the same chemical abundance. | Unverified | No matching reference is available. |
+| Every observed nebula has an identical intrinsic luminosity. | Unverified | No matching reference is available. |
 
 [Planck paper and abstract](https://arxiv.org/abs/1807.06209) · [Hubble paper](https://doi.org/10.1073/pnas.15.3.168) · [Historical interpretation of Hubble's estimate](https://lss.fnal.gov/archive/2019/pub/fermilab-pub-19-716-ppd.pdf)
 

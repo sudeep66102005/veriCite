@@ -5,6 +5,7 @@ No DB connections are created at import time.
 """
 from __future__ import annotations
 
+import os
 import json
 import sqlite3
 import threading
@@ -27,6 +28,9 @@ _DB: Path = Path(DB_PATH)
 
 
 def _connect() -> sqlite3.Connection:
+    if url := os.getenv("VERICITE_DATABASE_URL"):
+        from app.postgres import connect
+        return connect(url)
     conn = sqlite3.connect(str(_DB))
     conn.row_factory = sqlite3.Row
     return conn
@@ -97,7 +101,9 @@ def init_db() -> None:
     with _lock:
         conn = _connect()
         try:
-            conn.executescript(_DDL)
+            for statement in _DDL.split(";"):
+                if statement.strip():
+                    conn.execute(statement)
             conn.execute("CREATE INDEX IF NOT EXISTS links_by_document ON claim_reference_links(document_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS links_by_claim ON claim_reference_links(claim_id)")
             conn.execute("""UPDATE claim_reference_links SET document_id =
@@ -118,12 +124,15 @@ def reserve_verification(token: str, peer: str, now: int) -> bool:
     conn = _connect()
     try:
         with conn:
-            conn.execute("BEGIN IMMEDIATE")
+            if isinstance(conn, sqlite3.Connection):
+                conn.execute("BEGIN IMMEDIATE")
+            else:
+                conn.execute("LOCK TABLE verification_slots IN EXCLUSIVE MODE")
             conn.execute("DELETE FROM verification_slots WHERE started <= ?", (now - 3600,))
-            active, recent = conn.execute("""SELECT
-                count(CASE WHEN active=1 AND started>? THEN 1 END),
-                count(CASE WHEN peer=? THEN 1 END) FROM verification_slots""", (now - 600, peer)).fetchone()
-            if active >= 4 or recent >= 8:
+            counts = conn.execute("""SELECT
+                count(CASE WHEN active=1 AND started>? THEN 1 END) AS active_count,
+                count(CASE WHEN peer=? THEN 1 END) AS recent_count FROM verification_slots""", (now - 600, peer)).fetchone()
+            if counts["active_count"] >= 4 or counts["recent_count"] >= 8:
                 return False
             conn.execute("INSERT INTO verification_slots VALUES (?, ?, ?, 1)", (token, peer, now))
         return True
@@ -147,7 +156,7 @@ def save_job(job: VerificationJob) -> None:
         try:
             with conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO jobs (job_id, data) VALUES (?, ?)",
+                    "INSERT INTO jobs (job_id, data) VALUES (?, ?) ON CONFLICT (job_id) DO UPDATE SET data=excluded.data",
                     (job.job_id, data),
                 )
         finally:
@@ -180,7 +189,7 @@ def save_blocks(blocks: list[DocumentBlock]) -> None:
         try:
             with conn:
                 conn.executemany(
-                    "INSERT OR REPLACE INTO document_blocks (block_id, document_id, data) VALUES (?, ?, ?)",
+                    "INSERT INTO document_blocks (block_id, document_id, data) VALUES (?, ?, ?) ON CONFLICT (block_id) DO UPDATE SET document_id=excluded.document_id, data=excluded.data",
                     rows,
                 )
         finally:
@@ -212,7 +221,7 @@ def save_references(refs: list[Reference]) -> None:
         try:
             with conn:
                 conn.executemany(
-                    'INSERT OR REPLACE INTO "references" (ref_id, document_id, data) VALUES (?, ?, ?)',
+                    'INSERT INTO "references" (ref_id, document_id, data) VALUES (?, ?, ?) ON CONFLICT (ref_id) DO UPDATE SET document_id=excluded.document_id, data=excluded.data',
                     rows,
                 )
         finally:
@@ -244,7 +253,7 @@ def save_claims(claims: list[Claim]) -> None:
         try:
             with conn:
                 conn.executemany(
-                    "INSERT OR REPLACE INTO claims (claim_id, document_id, data) VALUES (?, ?, ?)",
+                    "INSERT INTO claims (claim_id, document_id, data) VALUES (?, ?, ?) ON CONFLICT (claim_id) DO UPDATE SET document_id=excluded.document_id, data=excluded.data",
                     rows,
                 )
         finally:
@@ -275,7 +284,7 @@ def save_links(links: list[ClaimReferenceLink]) -> None:
         try:
             with conn:
                 conn.executemany(
-                    "INSERT OR REPLACE INTO claim_reference_links (link_id, claim_id, document_id, data) VALUES (?, ?, (SELECT document_id FROM claims WHERE claim_id=?), ?)",
+                    "INSERT INTO claim_reference_links (link_id, claim_id, document_id, data) VALUES (?, ?, (SELECT document_id FROM claims WHERE claim_id=?), ?) ON CONFLICT (link_id) DO UPDATE SET claim_id=excluded.claim_id, document_id=excluded.document_id, data=excluded.data",
                     rows,
                 )
         finally:
@@ -319,7 +328,7 @@ def save_resolved_source(src: ResolvedSource) -> None:
         try:
             with conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO resolved_sources (source_id, ref_id, data) VALUES (?, ?, ?)",
+                    "INSERT INTO resolved_sources (source_id, ref_id, data) VALUES (?, ?, ?) ON CONFLICT (source_id) DO UPDATE SET ref_id=excluded.ref_id, data=excluded.data",
                     (src.source_id, src.ref_id, src.model_dump_json()),
                 )
         finally:
@@ -356,7 +365,7 @@ def save_passages(passages: list[Passage]) -> None:
         try:
             with conn:
                 conn.executemany(
-                    "INSERT OR REPLACE INTO passages (passage_id, source_id, data) VALUES (?, ?, ?)",
+                    "INSERT INTO passages (passage_id, source_id, data) VALUES (?, ?, ?) ON CONFLICT (passage_id) DO UPDATE SET source_id=excluded.source_id, data=excluded.data",
                     rows,
                 )
         finally:
@@ -387,7 +396,7 @@ def save_assessment(a: Assessment) -> None:
         try:
             with conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO assessments (assessment_id, claim_id, job_id, data) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO assessments (assessment_id, claim_id, job_id, data) VALUES (?, ?, ?, ?) ON CONFLICT (assessment_id) DO UPDATE SET claim_id=excluded.claim_id, job_id=excluded.job_id, data=excluded.data",
                     (a.assessment_id, a.claim_id, None, a.model_dump_json()),
                 )
         finally:

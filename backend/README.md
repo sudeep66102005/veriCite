@@ -2,7 +2,7 @@
 
 FastAPI receives manuscript text extracted by the browser, maps claims to bibliography entries,
 retrieves original publications and compares their passages with each claim. Jobs, source
-evidence and assessments are stored in SQLite. Search endpoints also return candidate papers
+evidence and assessments are stored in SQLite or PostgreSQL. Search endpoints also return candidate papers
 for independent review. See the [workspace screenshot and architecture](../README.md).
 
 ## Local setup
@@ -43,7 +43,7 @@ Failed requests and no-store responses bypass the cache. Network errors and HTTP
 Retry-After delays above three seconds return control to the caller. Model submissions
 and PDF streams use their own request paths.
 
-Job admission uses an atomic SQLite transaction shared by workers on the same database.
+Job admission uses an atomic database transaction shared by workers on the same database.
 The limits are four active jobs and eight submissions per client address per hour.
 To distinguish clients behind a reverse proxy, set `TRUSTED_PROXY_CIDRS` to the ingress
 proxy addresses you control and start Uvicorn with `--no-proxy-headers` so VeriCite sees
@@ -116,15 +116,23 @@ Configure provider settings on the FastAPI server:
 | `SEMANTIC_SCHOLAR_API_KEY` | Optional authenticated Semantic Scholar requests |
 | `UNPAYWALL_EMAIL` | Enables Unpaywall lookups for resolved DOIs |
 
-Verification retrieves selectable PDF passages with PyMuPDF and ranks them by term relevance. Set `EMBEDDING_MODEL` to enable sentence-transformer ranking on a backend provisioned for that model.
+Verification retrieves selectable PDF passages with PyMuPDF and ranks them with MiniLM embeddings and lexical signals. Set `EMBEDDING_MODEL=` for lightweight term ranking, which also provides the fallback when embeddings are unavailable.
 
 ### Reproduce the verification benchmark
 
 Run `python backend/benchmark.py --api https://YOUR-BACKEND` from the repository root
-to submit the eight public test statements. For an existing backend report, use
+to submit the sixteen public test statements. For an existing backend report, use
 `python backend/benchmark.py --report report.json`. Each case checks the verdict,
 citation identity and evidence trace. Missing, duplicate and unexpected results
-fail the run. Exit status 0 means all eight cases passed, 1 means a mismatch,
+fail the run. Exit status 0 means all sixteen cases passed, 1 means a mismatch,
 and 2 indicates that the benchmark could not complete. This small benchmark
-measures these eight cases only. A reviewer should inspect whether each passage
+measures these sixteen cases only. A reviewer should inspect whether each passage
 scientifically justifies the explanation.
+
+### Persistent storage and verification checks
+
+Set `VERICITE_DATABASE_URL` to a PostgreSQL connection string to share job data, access-token digests and quota counters across instances. All workers must use the same database. With this variable unset, SQLite uses `DB_PATH`; production SQLite requires a persistent volume. Selecting a new database starts a separate history. Existing SQLite jobs stay in the original database. The browser keeps bearer tokens in tab-scoped session storage.
+
+Use trusted ingress CIDRs described above for proxy-based limits. Successful reference identities are cached for five minutes, scoped by DOI/title, authors and year. Each event loop permits three concurrent metadata GETs per provider host.
+
+The API accepts extracted UTF-8 manuscript text in JSON with a TXT or Markdown filename and a two-million-byte text limit. PDF signature and size are checked in the browser before extraction. Production API responses carry CSP, HSTS and content-sniffing protection. Gemini receives task instructions and untrusted manuscript or passage data in separate message roles.

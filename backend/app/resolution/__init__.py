@@ -6,6 +6,9 @@ and Semantic Scholar, in that priority order.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+from threading import Lock
+from time import monotonic
 import asyncio
 import difflib
 import html
@@ -329,6 +332,26 @@ def _ref_key(ref: Reference) -> tuple:
     return (_doi(ref.doi), (ref.title or "").casefold().strip(), ref.year, tuple(ref.authors))
 
 
+_resolved_cache = OrderedDict()
+_cache_lock = Lock()
+
+
+async def cached_reference(key, ref, client):
+    with _cache_lock:
+        entry = _resolved_cache.get(key)
+        if entry and entry[0] > monotonic():
+            _resolved_cache.move_to_end(key)
+            return entry[1].model_copy(deep=True, update={"ref_id": ref.ref_id, "source_id": f"src_{uuid.uuid4().hex[:12]}"})
+    source = await resolve_reference(ref, client)
+    if source.identity_status == IdentityStatus.matched and (ref.title or ref.doi):
+        with _cache_lock:
+            _resolved_cache[key] = (monotonic() + 300, source.model_copy(deep=True))
+            _resolved_cache.move_to_end(key)
+            if len(_resolved_cache) > 128:
+                _resolved_cache.popitem(last=False)
+    return source
+
+
 async def resolve_all_references(refs: list[Reference]) -> list[ResolvedSource]:
     """Resolve all references with deduplication and concurrency limit of 3."""
     sem = asyncio.Semaphore(3)
@@ -349,7 +372,7 @@ async def resolve_all_references(refs: list[Reference]) -> list[ResolvedSource]:
 
     async def _resolve_one(key: tuple, ref: Reference, client: httpx.AsyncClient) -> None:
         async with sem:
-            resolved = await resolve_reference(ref, client)
+            resolved = await cached_reference(key, ref, client)
         results.append(resolved)
         # Emit cloned sources for duplicate refs (same paper, different ref_ids)
         for dup_ref_id in duplicates[key]:

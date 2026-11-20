@@ -6,6 +6,8 @@ from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import random
+from weakref import WeakKeyDictionary
+from urllib.parse import urlsplit
 from threading import Lock
 from time import monotonic
 
@@ -14,6 +16,17 @@ import httpx
 
 _cache = OrderedDict()
 _lock = Lock()
+_provider_limits = WeakKeyDictionary()
+
+
+def provider_limit(url):
+    loop = asyncio.get_running_loop()
+    host = urlsplit(url).hostname
+    with _lock:
+        limits = _provider_limits.setdefault(loop, {})
+        if host not in limits:
+            limits[host] = asyncio.Semaphore(3)
+        return limits[host]
 
 
 def clear_cache():
@@ -43,7 +56,8 @@ async def metadata_get(client, url, **kwargs):
             return httpx.Response(200, content=entry[1], headers=entry[2], request=httpx.Request("GET", url))
     for attempt in range(3):
         try:
-            response = await client.get(url, **kwargs)
+            async with provider_limit(url):
+                response = await client.get(url, **kwargs)
         except (httpx.TimeoutException, httpx.NetworkError):
             if attempt == 2:
                 raise

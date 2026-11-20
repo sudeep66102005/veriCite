@@ -23,6 +23,14 @@ EXPECTED = [
     ("PARTLY_SUPPORTED", "[1]", PLANCK),
     ("UNSUPPORTED", "[1]", PLANCK),
     ("SUPPORTED", "[2]", HUBBLE),
+    ("SUPPORTED", '[1]', PLANCK),
+    ("CONTRADICTORY", '[1]', PLANCK),
+    ("SUPPORTED", '[2]', HUBBLE),
+    ("UNSUPPORTED", '[2]', HUBBLE),
+    ("UNVERIFIED", '[11]', None),
+    ("UNVERIFIED", '[12]', None),
+    ("UNVERIFIED", None, None),
+    ("UNVERIFIED", None, None),
 ]
 
 
@@ -65,7 +73,8 @@ def evaluate(report):
         results.append({"statement": statement, "passed": not errors, "errors": errors})
     extra = sum(len(v) for k, v in by_text.items() if k not in statements)
     return {"passed": sum(item["passed"] for item in results), "expected": len(results),
-            "unexpected_rows": extra, "cases": results}
+            "accuracy_percent": round(100 * sum(item["passed"] for item in results) / len(results), 1),
+            "source_availability": report.get("source_availability"), "unexpected_rows": extra, "cases": results}
 
 
 def run_live(base):

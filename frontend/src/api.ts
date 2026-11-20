@@ -3,7 +3,7 @@ export interface VerificationStatus {
   job_state: 'queued' | 'running' | 'completed' | 'failed';
   current_stage: number | null;
   error_message: string | null;
-  report?: { stage_errors: string[] };
+  report?: { source_availability?: import("./types").Workspace["sourceAvailability"]; stage_errors: string[] };
 }
 const API_BASE = import.meta.env?.VITE_API_URL?.replace(/\/$/, '') ?? '';
 export const verificationEnabled = Boolean(API_BASE || import.meta.env?.DEV);
@@ -20,7 +20,8 @@ export function checkHealth() {
 }
 const jobTokens = new Map<string, string>();
 function jobHeaders(id: string) {
-  const token = jobTokens.get(id);
+  let token = jobTokens.get(id);
+  try { token ??= sessionStorage.getItem('vericite-job:' + id) ?? undefined; } catch { /* Session storage may be unavailable. */ }
   return token ? { Authorization: `Bearer ${token}` } : undefined;
 }
 export async function submitDocument(text: string, filename = 'document.txt', signal?: AbortSignal, accessCode?: string) {
@@ -28,7 +29,10 @@ export async function submitDocument(text: string, filename = 'document.txt', si
     signal, method: 'POST', headers: { 'Content-Type': 'application/json', ...(accessCode ? { 'X-Verification-Key': accessCode } : {}) },
     body: JSON.stringify({ text, filename }),
   });
-  if (job.access_token) jobTokens.set(job.job_id, job.access_token);
+  if (job.access_token) {
+    jobTokens.set(job.job_id, job.access_token);
+    try { sessionStorage.setItem('vericite-job:' + job.job_id, job.access_token); } catch { /* The in-memory token still works. */ }
+  }
   return job;
 }
 export function getJobStatus(jobId: string, signal?: AbortSignal) {

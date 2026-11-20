@@ -81,7 +81,7 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
             return source, [passage]
 
         async def classify(claim, passages, coverage, title, newer):
-            result = {"verdict": "CONTRADICTORY" if "90 km" in claim else "SUPPORTED",
+            result = {"verdict": "CONTRADICTORY" if any(value in claim for value in ("90 km", "17 km")) else "SUPPORTED",
                       "evidence_passage_ids": [passages[0]["passage_id"]], "issue_flags": [],
                       "explanation": "Compared the same model and units."}
             if "regardless of the cosmological model" in claim:
@@ -102,8 +102,8 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evaluate({"rows": []})["passed"], 0)
         self.assertEqual(evaluate({"rows": [*report["rows"], report["rows"][0]]})["passed"], evaluation["expected"] - 1)
         rows = report["rows"]
-        self.assertEqual(len(rows), 8)
-        self.assertEqual([r["assessment"]["semantic_verdict"] if r["assessment"] else None for r in rows],
+        self.assertEqual(len(rows), 16)
+        self.assertEqual([r["assessment"]["semantic_verdict"] if r["assessment"] else None for r in rows[:8]],
                          ["SUPPORTED", "CONTRADICTORY", "POSSIBLY_OUTDATED", None, None, "PARTLY_SUPPORTED", "UNSUPPORTED", "SUPPORTED"])
         self.assertEqual(rows[2]["assessment"]["update_evidence"]["quote"], modern)
         self.assertEqual(rows[0]["coverage"], "full_text")

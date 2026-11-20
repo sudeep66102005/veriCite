@@ -7,7 +7,12 @@ import type { Claim, Workspace } from './types';
 export function ReferencePreview({ entry, row }: { entry: string; row: Claim }) {
   const doi = entry.match(/10\.\d{4,9}\/[^\s<>"\]]+/i)?.[0]?.replace(/[.,;]+$/, '');
   const url = doi ? `https://doi.org/${doi}` : row.source?.startsWith('https://') ? row.source : null;
-  return <details className="my-2 break-words text-sm"><summary className="w-fit cursor-pointer rounded-md border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-indigo-800">{entry.replace(/https?:\/\/\S+/g, '').trim() || entry}</summary><div className="mt-2 rounded-xl border border-slate-200 bg-white p-4 leading-7"><strong>Reference</strong><p>{entry}</p><strong>Why this reference was cited</strong><p>{row.status === 'Unverified' ? 'This bibliography entry matches the citation marker. Its source passage is not verified.' : row.reason}</p>{url && <a className="font-semibold text-indigo-700 underline" href={url} target="_blank" rel="noreferrer">Open original article</a>}</div></details>;
+  return <details onKeyDown={event => {
+    if (event.key === 'Escape' && event.currentTarget.open) {
+      event.currentTarget.open = false;
+      event.currentTarget.querySelector('summary')?.focus();
+    }
+  }} className="my-2 break-words text-sm"><summary className="w-fit cursor-pointer rounded-md border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-indigo-800">{entry.replace(/https?:\/\/\S+/g, '').trim() || entry}</summary><div className="mt-2 rounded-xl border border-slate-200 bg-white p-4 leading-7"><strong>Reference</strong><p>{entry}</p><strong>Why this reference was cited</strong><p>{row.status === 'Unverified' ? 'This bibliography entry matches the citation marker. Its source passage is not verified.' : row.reason}</p>{url && <a className="font-semibold text-indigo-700 underline" href={url} target="_blank" rel="noreferrer">Open original article</a>}</div></details>;
 }
 function Bars({ title, items, sections = false }: { title: string; items: [string, number][]; sections?: boolean }) {
   const max = Math.max(1, ...items.map(([, n]) => n));

@@ -120,6 +120,7 @@ export async function runVerification(input: DocumentInput, onStep: (step: numbe
     ...initialWorkspace(),
     claims: rows.map(toClaim),
     mode: 'API verification',
+    ...(job.report?.source_availability ? { sourceAvailability: job.report.source_availability } : {}),
     document: title,
     requestedPdf: file ? fileMetadata(file) : null,
   };

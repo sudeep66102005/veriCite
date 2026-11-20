@@ -17,7 +17,7 @@ flowchart TD
     Resolve --> Retrieve["Retrieve PDF passages or abstracts"]
     Retrieve <--> OA["Open-access locations and Unpaywall"]
     Retrieve --> Verify["Compare evidence with Gemini"]
-    Verify --> DB["SQLite jobs, passages and assessments"]
+    Verify --> DB["SQLite or PostgreSQL"]
     DB --> API
     API -->|Claim report| UI
 ```
@@ -47,7 +47,7 @@ npm run preview
 
 The React workspace reads selectable PDF text with PDF.js. When connected to FastAPI it
 submits the manuscript, polls a verification job, and displays a result for each citation.
-The backend stores jobs and review evidence in SQLite. It resolves publications with Crossref,
+The backend stores jobs and review evidence in SQLite or PostgreSQL. It resolves publications with Crossref,
 OpenAlex and Semantic Scholar and can use Unpaywall to locate full text. The configured
 Gemini model compares retrieved passages. Local extraction and the sample remain available
 without backend credentials.
@@ -103,7 +103,7 @@ A verdict requires a passage from the matched publication. When a newer citing a
 explicitly revises the same finding, the report can show a **Possibly outdated** verdict
 with the newer publication and its passage. Coverage varies with open-access availability.
 
-The server accepts four active verification jobs across workers sharing its SQLite database
+The server accepts four active verification jobs across workers sharing its database
 and eight submissions per client address per hour. The backend guide explains trusted proxy configuration. Each job has a nine-minute deadline,
 up to eight compound-claim extraction requests and forty claim–reference assessments.
 Extra pairs stay visible for review.
@@ -121,3 +121,15 @@ frontend. The Render backend allows cross-origin requests from
 `https://veri-cite-two.vercel.app`. Local Vite development uses its existing
 proxy to port 8000 when no API URL is configured. Production builds without an
 API URL use local extraction. Verified results are shown per claim and cited source.
+
+## Benchmark results
+
+| Evaluation | Cases passing | Accuracy |
+| --- | ---: | ---: |
+| Manuscript through report, controlled source passages and classifier | 16 / 16 | 100% |
+| Crossref DOI resolution against the public API | 1 / 1 | 100% identity match |
+| Live providers and Gemini | No measured run published | — |
+
+The controlled run checks citation mapping, abstention, verdict handling and traceable evidence. To measure live accuracy, run `python backend/benchmark.py --api YOUR_BACKEND`. The JSON includes per-case errors. Reports show the percentage of distinct mapped bibliography entries for which no source text was available. With no mapped citations, the rate is undefined.
+
+CI publishes backend line and branch coverage, audits dependencies, and tests a browser file upload through FastAPI and PostgreSQL to a downloadable report. A manually dispatched workflow also checks a known DOI against live Crossref.

@@ -185,6 +185,7 @@ class VerificationReport(BaseModel):
     document_id: str | None = None
     total_claims: int
     total_references: int
+    source_availability: dict[str, int | float | None] = Field(default_factory=dict)
     total_pairs: int
     assessments: list[Assessment] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)

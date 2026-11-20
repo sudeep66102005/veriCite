@@ -30,6 +30,7 @@ export interface Workspace {
   schemaVersion: 2;
   document: string;
   mode: Mode;
+  sourceAvailability?: { unavailable: number; cited_sources: number; percent: number | null };
   claims: Claim[];
   reviews: Record<string, Review>;
   history: Review[];

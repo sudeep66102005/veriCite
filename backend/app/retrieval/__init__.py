@@ -176,6 +176,19 @@ def _embed_texts(texts: list[str]) -> np.ndarray:
         return model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
 
 
+def _lexical_rank(passages, claims_text, top_k):
+    # Weight terms by rarity in this paper, including numbers and units.
+    from collections import Counter
+    from math import log1p
+    tokens = [set(re.findall(r"\w+", p.verbatim_text.casefold())) for p in passages]
+    frequency = Counter(term for terms in tokens for term in terms)
+    queries = [set(re.findall(r"\w+", claim.casefold())) for claim in claims_text]
+    weights = {term: log1p(len(passages) / count) for term, count in frequency.items()}
+    scores = [max(sum(weights[t] for t in terms & query) for query in queries) for terms in tokens]
+    indices = sorted(range(len(passages)), key=scores.__getitem__, reverse=True)[:top_k]
+    return [passages[i] for i in indices]
+
+
 def _rank_passages(
     passages: list[Passage],
     claims_text: list[str],
@@ -184,16 +197,7 @@ def _rank_passages(
     if len(passages) <= top_k or not claims_text:
         return passages
     if not EMBEDDING_MODEL:
-        # Weight terms by rarity in this paper, including numbers and units.
-        from collections import Counter
-        from math import log1p
-        tokens = [set(re.findall(r"\w+", p.verbatim_text.casefold())) for p in passages]
-        frequency = Counter(term for terms in tokens for term in terms)
-        queries = [set(re.findall(r"\w+", claim.casefold())) for claim in claims_text]
-        weights = {term: log1p(len(passages) / count) for term, count in frequency.items()}
-        scores = [max(sum(weights[t] for t in terms & query) for query in queries) for terms in tokens]
-        indices = sorted(range(len(passages)), key=scores.__getitem__, reverse=True)[:top_k]
-        return [passages[i] for i in indices]
+        return _lexical_rank(passages, claims_text, top_k)
 
     passage_texts = [p.verbatim_text for p in passages]
     passage_embeddings = _embed_texts(passage_texts)
@@ -350,8 +354,7 @@ async def retrieve_source(
         try:
             passages = await asyncio.to_thread(_rank_passages, passages, claims_text, top_k=10)
         except Exception:
-            # If embedding fails (model not downloaded, etc.) return unranked first 10
-            passages = passages[:10]
+            passages = _lexical_rank(passages, claims_text, 10)
 
     updated = source.model_copy(update={
         "coverage": coverage, "source_url": selected_url, "publication_url": publication_url,

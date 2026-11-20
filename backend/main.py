@@ -16,6 +16,7 @@ from app.config import GEMINI_API_KEY
 from app.pipeline import create_job, run_pipeline
 from app.database import init_db, get_job, get_claims, document_links, get_references, get_resolved_source, get_passages
 from app.peers import quota_peer
+from app.request_limits import VerificationBodyLimit
 from app.models import JobState
 from app.database import reserve_verification, finish_verification
 
@@ -26,8 +27,21 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="veriCite Evidence API", version="0.1.0", lifespan=lifespan)
+app.add_middleware(VerificationBodyLimit)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://localhost:5173", "https://veri-cite-two.vercel.app"],
                    allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["*"])
+
+@app.middleware("http")
+async def api_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000"
+    if request.url.path.startswith("/api/"):
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 
 @app.get("/api/health")
 def health():
@@ -96,8 +110,12 @@ async def verify(request: VerifyRequest, connection: Request, x_verification_key
         raise HTTPException(401, "This workspace requires a verification access code.")
     if not GEMINI_API_KEY.strip():
         raise HTTPException(status_code=503, detail="Verification is unavailable until GEMINI_API_KEY is configured on Render.")
-    filename = request.filename if request.filename.lower().endswith((".txt", ".md")) else "document.txt"
+    if not request.filename.lower().endswith((".txt", ".md")) or "\x00" in request.text:
+        raise HTTPException(415, "Submit extracted text with a TXT or Markdown filename.")
+    filename = request.filename
     content = request.text.encode("utf-8")
+    if len(content) > 2_000_000:
+        raise HTTPException(413, "Manuscript exceeds the two-megabyte text limit.")
     token = secrets.token_urlsafe(32)
     digest = hashlib.sha256(token.encode()).hexdigest()
     peer = connection.client.host if connection.client else "unknown"

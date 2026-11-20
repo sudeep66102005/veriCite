@@ -1,0 +1,101 @@
+{
+  "passed": 12,
+  "expected": 16,
+  "accuracy_percent": 75.0,
+  "source_availability": null,
+  "unexpected_rows": 0,
+  "cases": [
+    {
+      "statement": "Under base ΛCDM, Planck inferred a Hubble constant of 67.4 km/s/Mpc [1].",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "Under base ΛCDM, Planck inferred a Hubble constant of 90 km/s/Mpc [1].",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "A value of about 500 km/s/Mpc remains the accepted modern estimate of the Hubble constant [2].",
+      "passed": false,
+      "errors": [
+        "Expected POSSIBLY_OUTDATED, received UNVERIFIED.",
+        "Missing assessment or evidence trace.",
+        "Missing newer passage or publication link."
+      ]
+    },
+    {
+      "statement": "The telescope observed thirty new galaxies [9].",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "Every galaxy rotates at the same speed.",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "The Planck estimate of 67.4 km/s/Mpc applies regardless of the cosmological model [1].",
+      "passed": false,
+      "errors": [
+        "Expected PARTLY_SUPPORTED, received CONTRADICTORY."
+      ]
+    },
+    {
+      "statement": "The Planck study measured ocean salinity from water samples [1].",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "Hubble historically estimated roughly 500 km/s/Mpc in 1929 [2].",
+      "passed": false,
+      "errors": [
+        "Expected SUPPORTED, received UNVERIFIED.",
+        "Missing assessment or evidence trace."
+      ]
+    },
+    {
+      "statement": "Planck reported an uncertainty of 0.5 km/s/Mpc for the Hubble constant under base ΛCDM [1].",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "The base ΛCDM fit gave a Hubble constant of 17 km/s/Mpc [1].",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "The 1929 study reported a distance–velocity relation for extragalactic nebulae [2].",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "Planck measured ocean salinity in the Pacific Ocean [2].",
+      "passed": false,
+      "errors": [
+        "Expected UNSUPPORTED, received UNVERIFIED.",
+        "Missing assessment or evidence trace."
+      ]
+    },
+    {
+      "statement": "The observing team measured the average stellar age [11].",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "The reported velocities were independent of distance [12].",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "All sampled clusters have the same chemical abundance.",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "statement": "Every observed nebula has an identical intrinsic luminosity.",
+      "passed": true,
+      "errors": []
+    }
+  ]
+}

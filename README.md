@@ -128,7 +128,9 @@ API URL use local extraction. Verified results are shown per claim and cited sou
 | --- | ---: | ---: |
 | Manuscript through report, controlled source passages and classifier | 16 / 16 | 100% |
 | Crossref DOI resolution against the public API | 1 / 1 | 100% identity match |
-| Live providers and Gemini | No measured run published | — |
+| [Live Render deployment, 20 Nov 2026](backend/fixtures/live-benchmark-2026-11-20.json) | 12 / 16 | 75% |
+
+The live run used the deployed service before this change. Three historical-source cases returned no traceable verdict. One model-dependent estimate received a contradictory verdict where the answer key expects partial support.
 
 The controlled run checks citation mapping, abstention, verdict handling and traceable evidence. To measure live accuracy, run `python backend/benchmark.py --api YOUR_BACKEND`. The JSON includes per-case errors. Reports show the percentage of distinct mapped bibliography entries for which no source text was available. With no mapped citations, the rate is undefined.
 
